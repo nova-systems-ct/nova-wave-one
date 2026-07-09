@@ -4,8 +4,10 @@ import NovaLogo from '../components/NovaLogo'
 import { supabase } from '../lib/supabase'
 
 const GOLD = '#C8A96E'
-const VALID_EMAIL = 'isaac_0427@icloud.com'
-const VALID_PASSWORD = 'NovaSystem2024'
+const VALID_CREDENTIALS = [
+  { email: 'isaac_0427@icloud.com', password: 'NovaSystem2024' },
+  { email: 'isaac@nova-systems.app', password: 'NovaWave2024' },
+]
 
 export default function Login() {
   const navigate = useNavigate()
@@ -24,7 +26,9 @@ export default function Login() {
     setError('')
     setLoading(true)
 
-    if (email.trim().toLowerCase() === VALID_EMAIL && password === VALID_PASSWORD) {
+    const enteredEmail = email.trim().toLowerCase()
+    const matches = VALID_CREDENTIALS.some((c) => c.email === enteredEmail && c.password === password)
+    if (matches) {
       localStorage.setItem('nova_wave_authenticated', 'true')
       navigate('/dashboard')
       setLoading(false)
@@ -86,6 +90,9 @@ export default function Login() {
         <p className="text-center mt-8 text-[11px] leading-relaxed" style={{ color: '#666666' }}>
           Access restricted to authorized Nova Systems personnel.<br />
           Contact <a href="mailto:hello@nova-systems.app" style={{ color: GOLD }}>hello@nova-systems.app</a> for access.
+        </p>
+        <p className="text-center mt-3 text-[9px]" style={{ color: '#444444' }}>
+          Test access available — use isaac@nova-systems.app
         </p>
       </div>
     </div>
