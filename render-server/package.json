@@ -1,0 +1,16 @@
+{
+  "name": "nova-wave-stream-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "^3.9.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "node-fetch": "^3.3.2",
+    "ws": "^8.18.0"
+  }
+}
