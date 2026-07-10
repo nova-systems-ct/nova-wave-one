@@ -7,6 +7,7 @@ import {
 import DashboardShell from '../../components/DashboardShell'
 import { AuditAPI } from '../../lib/api'
 import { scoreMeta } from '../../lib/constants'
+import { getMockAudit, isMockAuditId } from '../../lib/mockAudit'
 
 const GOLD = '#C8A96E'
 const HOURLY_VALUE = 50 // $/hour, per spec, used to price out AI-automatable hours
@@ -62,7 +63,21 @@ export default function AuditResult() {
 
   const load = () => {
     setLoading(true)
-    AuditAPI.get(id).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false))
+    // Local-dev mock results never hit the real API — they live in sessionStorage instead.
+    if (isMockAuditId(id)) {
+      try {
+        setAudit(getMockAudit(id))
+      } catch (err) {
+        console.error('[AuditResult] Failed to read mock audit:', err)
+        setAudit(null)
+      }
+      setLoading(false)
+      return
+    }
+    AuditAPI.get(id)
+      .then((data) => setAudit(data || null))
+      .catch((err) => { console.error('[AuditResult] Failed to load audit:', err); setAudit(null) })
+      .finally(() => setLoading(false))
   }
   useEffect(load, [id])
 
@@ -88,8 +103,14 @@ export default function AuditResult() {
     setBusy('')
   }
 
+  const [downloadNotice, setDownloadNotice] = useState('')
+
   const downloadBase64 = (base64, mime, filename) => {
-    if (!base64) return
+    if (!base64) {
+      setDownloadNotice('PDF generation requires the full audit to be run on the deployed version.')
+      return
+    }
+    setDownloadNotice('')
     const link = document.createElement('a')
     link.href = `data:${mime};base64,${base64}`
     link.download = filename
@@ -99,12 +120,17 @@ export default function AuditResult() {
   if (loading) return <DashboardShell title="Nova Audit"><p style={{ color: '#666666' }}>Loading…</p></DashboardShell>
   if (!audit) return <DashboardShell title="Nova Audit"><p style={{ color: '#666666' }}>Audit not found.</p></DashboardShell>
 
-  const meta = scoreMeta(audit.overall_score || 0)
-  const competitors = Array.isArray(audit.competitor_data) ? audit.competitor_data : []
-  const roadmap = audit.priority_roadmap || { fix_today: [], fix_this_month: [], fix_this_quarter: [] }
-  const breakdown = audit.revenue_leak_breakdown || {}
-  const sortedLeaks = Object.entries(breakdown).sort((a, b) => Number(b[1]) - Number(a[1]))
-  const revenueSeverity = Math.max(0, 100 - Math.min(100, Math.round((audit.revenue_leak_monthly || 0) / 100)))
+  const meta = scoreMeta(audit?.overall_score || 0)
+  const competitors = Array.isArray(audit?.competitor_data) ? audit.competitor_data : []
+  const roadmap = audit?.priority_roadmap || {}
+  const roadmapToday = Array.isArray(roadmap?.fix_today) ? roadmap.fix_today : []
+  const roadmapMonth = Array.isArray(roadmap?.fix_this_month) ? roadmap.fix_this_month : []
+  const roadmapQuarter = Array.isArray(roadmap?.fix_this_quarter) ? roadmap.fix_this_quarter : []
+  const breakdown = audit?.revenue_leak_breakdown || {}
+  const sortedLeaks = Object.entries(breakdown).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+  const revenueSeverity = Math.max(0, 100 - Math.min(100, Math.round((audit?.revenue_leak_monthly || 0) / 100)))
+  const createdAtDate = audit?.created_at ? new Date(audit.created_at) : null
+  const createdAtLabel = createdAtDate && !isNaN(createdAtDate) ? createdAtDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'
 
   const categories = [
     { key: 'brand', label: 'Brand', score: audit.brand_score, icon: Award },
@@ -128,7 +154,7 @@ export default function AuditResult() {
   const totalHoursPerWeek = aiTasks.reduce((s, t) => s + t.hours, 0)
   const annualValue = totalHoursPerWeek * 52 * HOURLY_VALUE
 
-  const wavesFormUrl = `https://nova-systems.app/waves/form?business_name=${encodeURIComponent(audit.business_name || '')}&phone=${encodeURIComponent(audit.phone || '')}&email=${encodeURIComponent(audit.email || '')}&city=${encodeURIComponent(audit.city || '')}&industry=${encodeURIComponent(audit.industry || '')}`
+  const wavesFormUrl = `https://nova-systems.app/waves/form?business_name=${encodeURIComponent(audit?.business_name || '')}&phone=${encodeURIComponent(audit?.phone || '')}&email=${encodeURIComponent(audit?.email || '')}&city=${encodeURIComponent(audit?.city || '')}&industry=${encodeURIComponent(audit?.industry || '')}`
 
   return (
     <DashboardShell title="Nova Intelligence Report">
@@ -136,13 +162,13 @@ export default function AuditResult() {
       <div className="flex flex-wrap items-start justify-between gap-6 mb-10">
         <div>
           <p className="text-[10px] font-bold tracking-[0.2em] uppercase mb-2" style={{ color: GOLD }}>Nova Intelligence Report</p>
-          <h1 className="text-4xl font-black text-white mb-2">{audit.business_name}</h1>
-          <p className="text-sm" style={{ color: '#999999' }}>{audit.city} · {audit.industry}</p>
-          <p className="text-xs mt-1" style={{ color: '#666666' }}>{new Date(audit.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
+          <h1 className="text-4xl font-black text-white mb-2">{audit?.business_name || 'Untitled Business'}</h1>
+          <p className="text-sm" style={{ color: '#999999' }}>{audit?.city || '—'} · {audit?.industry || '—'}</p>
+          <p className="text-xs mt-1" style={{ color: '#666666' }}>{createdAtLabel}</p>
         </div>
         <div className="flex flex-col items-center">
-          <ScoreCircle score={audit.overall_score} />
-          <p className="text-xs font-bold mt-2 text-center max-w-[180px]" style={{ color: meta.color }}>{audit.score_label || meta.label}</p>
+          <ScoreCircle score={audit?.overall_score} />
+          <p className="text-xs font-bold mt-2 text-center max-w-[180px]" style={{ color: meta.color }}>{audit?.score_label || meta.label}</p>
         </div>
       </div>
 
@@ -191,9 +217,11 @@ export default function AuditResult() {
       </div>
 
       {/* COMPETITOR INTELLIGENCE */}
-      {competitors.length > 0 && (
-        <div className="rounded-xl p-6 mb-10 overflow-x-auto" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A' }}>
-          <p className="text-xs font-bold tracking-[0.15em] uppercase mb-4" style={{ color: GOLD }}>Competitor Intelligence</p>
+      <div className="rounded-xl p-6 mb-10 overflow-x-auto" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A' }}>
+        <p className="text-xs font-bold tracking-[0.15em] uppercase mb-4" style={{ color: GOLD }}>Competitor Intelligence</p>
+        {competitors.length === 0 ? (
+          <p className="text-sm" style={{ color: '#666666' }}>No competitor data available for this audit yet.</p>
+        ) : (
           <table className="w-full text-sm" style={{ minWidth: 640 }}>
             <thead>
               <tr>
@@ -223,32 +251,33 @@ export default function AuditResult() {
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* KEY FINDINGS */}
-      {Array.isArray(audit.key_findings) && audit.key_findings.length > 0 && (
-        <div className="mb-10">
-          <p className="text-xs font-bold tracking-[0.15em] uppercase mb-4" style={{ color: GOLD }}>Key Findings</p>
-          <div className="space-y-2">
-            {audit.key_findings.map((f, i) => (
-              <div key={i} className="flex items-start gap-3 rounded-lg px-4 py-3" style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)' }}>
-                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#f87171' }} />
-                <p className="text-sm font-semibold leading-relaxed" style={{ color: '#eee' }}>{highlightDollars(f)}</p>
-              </div>
-            ))}
-          </div>
+      <div className="mb-10">
+        <p className="text-xs font-bold tracking-[0.15em] uppercase mb-4" style={{ color: GOLD }}>Key Findings</p>
+        <div className="space-y-2">
+          {(Array.isArray(audit?.key_findings) && audit.key_findings.length > 0
+            ? audit.key_findings
+            : ['No specific issues were flagged — this business is in reasonably good shape across the categories we could measure.']
+          ).map((f, i) => (
+            <div key={i} className="flex items-start gap-3 rounded-lg px-4 py-3" style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)' }}>
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#f87171' }} />
+              <p className="text-sm font-semibold leading-relaxed" style={{ color: '#eee' }}>{highlightDollars(f || '')}</p>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
 
       {/* PRIORITY ROADMAP */}
       <div className="mb-10">
         <p className="text-xs font-bold tracking-[0.15em] uppercase mb-4" style={{ color: GOLD }}>Priority Roadmap</p>
         <div className="grid md:grid-cols-3 gap-4">
           {[
-            { title: 'Fix Today', color: '#4ade80', items: roadmap.fix_today, key: 'today' },
-            { title: 'Fix This Month — Wave One', color: GOLD, items: roadmap.fix_this_month, key: 'month' },
-            { title: 'Fix This Quarter — Wave Two', color: '#999999', items: roadmap.fix_this_quarter, key: 'quarter' },
+            { title: 'Fix Today', color: '#4ade80', items: roadmapToday, key: 'today' },
+            { title: 'Fix This Month — Wave One', color: GOLD, items: roadmapMonth, key: 'month' },
+            { title: 'Fix This Quarter — Wave Two', color: '#999999', items: roadmapQuarter, key: 'quarter' },
           ].map(({ title, color, items, key }) => (
             <div key={key} className="rounded-xl p-5" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A' }}>
               <p className="text-xs font-bold uppercase tracking-[0.08em] mb-4" style={{ color }}>{title}</p>
@@ -258,9 +287,9 @@ export default function AuditResult() {
                 <div className="space-y-4">
                   {items.map((item, i) => (
                     <div key={i} style={{ borderBottom: i < items.length - 1 ? '1px solid #2A2A2A' : 'none', paddingBottom: 14 }}>
-                      <p className="text-sm font-bold text-white mb-1">{item.action}</p>
-                      <p className="text-xs mb-2" style={{ color: '#999999' }}>{item.impact}</p>
-                      <p className="text-[11px] mb-2" style={{ color: '#666666' }}>{item.cost || item.estimated_cost}{item.time ? ` · ${item.time}` : ''}</p>
+                      <p className="text-sm font-bold text-white mb-1">{item?.action || 'Action'}</p>
+                      <p className="text-xs mb-2" style={{ color: '#999999' }}>{item?.impact || ''}</p>
+                      <p className="text-[11px] mb-2" style={{ color: '#666666' }}>{item?.cost || item?.estimated_cost || ''}{item?.time ? ` · ${item.time}` : ''}</p>
                       {key === 'month' && (
                         <button className="text-[10px] font-bold uppercase tracking-[0.05em] px-3 py-1.5 rounded" style={{ border: `1px solid ${GOLD}50`, color: GOLD }}>
                           Include in Wave One Proposal
@@ -308,13 +337,14 @@ export default function AuditResult() {
       </div>
 
       {resendResult && <p className="text-xs mb-4" style={{ color: GOLD }}>{resendResult}</p>}
+      {downloadNotice && <p className="text-xs mb-4" style={{ color: '#fbbf24' }}>{downloadNotice}</p>}
 
       {/* ACTION BUTTONS */}
       <div className="flex flex-wrap gap-3">
-        <button onClick={() => downloadBase64(audit.pdf_data, 'application/pdf', `${audit.business_name}-nova-intelligence-report.pdf`)} disabled={!audit.pdf_data} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: GOLD, color: '#080808', opacity: audit.pdf_data ? 1 : 0.4 }}>
+        <button onClick={() => downloadBase64(audit?.pdf_data, 'application/pdf', `${audit?.business_name || 'business'}-nova-intelligence-report.pdf`)} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: GOLD, color: '#080808' }}>
           <Download className="w-3.5 h-3.5" /> Download Nova Intelligence Report
         </button>
-        <button onClick={() => downloadBase64(audit.pitch_deck_data, 'application/vnd.openxmlformats-officedocument.presentationml.presentation', `${audit.business_name}-pitch.pptx`)} disabled={!audit.pitch_deck_data} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: `1px solid ${GOLD}`, color: GOLD, opacity: audit.pitch_deck_data ? 1 : 0.4 }}>
+        <button onClick={() => downloadBase64(audit?.pitch_deck_data, 'application/vnd.openxmlformats-officedocument.presentationml.presentation', `${audit?.business_name || 'business'}-pitch.pptx`)} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: `1px solid ${GOLD}`, color: GOLD }}>
           <Download className="w-3.5 h-3.5" /> Download Pitch Deck
         </button>
         <a href="https://nova-systems.app/welcome" target="_blank" rel="noreferrer" className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: '#000', color: '#fff', border: '1px solid #2A2A2A' }}>

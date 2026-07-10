@@ -22,6 +22,8 @@ export const AVG_TRANSACTION = {
   'Nutrition Bar': 8,
   'Jewelry Store': 300,
   'Print and Graphics Shop': 150,
+  'Technology': 250,
+  'Professional Services': 300,
   'Other': 100,
 }
 

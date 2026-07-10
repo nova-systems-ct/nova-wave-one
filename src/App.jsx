@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom'
+import ErrorBoundary from './components/ErrorBoundary'
 import Home from './pages/Home'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -51,9 +52,9 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
 
-        <Route path="/dashboard/audit" element={<AuditHome />} />
-        <Route path="/dashboard/audit/result/:id" element={<AuditResult />} />
-        <Route path="/dashboard/audit/reports" element={<AuditReports />} />
+        <Route path="/dashboard/audit" element={<ErrorBoundary><AuditHome /></ErrorBoundary>} />
+        <Route path="/dashboard/audit/result/:id" element={<ErrorBoundary><AuditResult /></ErrorBoundary>} />
+        <Route path="/dashboard/audit/reports" element={<ErrorBoundary><AuditReports /></ErrorBoundary>} />
 
         <Route path="/dashboard/voice" element={<VoiceHome />} />
         <Route path="/dashboard/voice/logs" element={<VoiceLogs />} />

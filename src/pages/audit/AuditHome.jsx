@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, Search, Layers, ListChecks, DollarSign, Map } from 'lucide-react'
+import { Check, Search, Layers, ListChecks, DollarSign, Map, RotateCcw } from 'lucide-react'
 import DashboardShell from '../../components/DashboardShell'
 import { CT_CITIES, INDUSTRIES } from '../../lib/constants'
 import { AuditAPI } from '../../lib/api'
+import { buildMockAudit, saveMockAudit } from '../../lib/mockAudit'
 
 const GOLD = '#C8A96E'
 
@@ -45,6 +46,42 @@ export default function AuditHome() {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
 
+  const resetForm = () => {
+    setForm(emptyForm)
+    setError('')
+    setRunning(false)
+    setStepIndex(0)
+  }
+
+  const runAuditDev = () => {
+    // Vercel serverless functions (api/nova-audit) do not run under `vite dev` — there is no
+    // backend to call locally. Play the same 10-step animation on a fixed 3s cadence, then hand
+    // off to a realistic mock result so the full result page can be built and tested without a
+    // deployment. Production never takes this path — see the import.meta.env.DEV check below.
+    let cancelled = false
+    let i = 0
+    const tick = () => {
+      if (cancelled) return
+      i += 1
+      setStepIndex(i)
+      if (i >= STEPS.length) {
+        try {
+          const mock = buildMockAudit(form)
+          saveMockAudit(mock)
+          setTimeout(() => navigate(`/dashboard/audit/result/${mock.audit_id}`), 400)
+        } catch (err) {
+          console.error('[AuditHome] Failed to build mock audit:', err)
+          setRunning(false)
+          setError('Something went wrong running the audit. Please try again. If the problem continues contact hello@nova-systems.app.')
+        }
+        return
+      }
+      setTimeout(tick, 3000)
+    }
+    setTimeout(tick, 3000)
+    return () => { cancelled = true }
+  }
+
   const runAudit = async (e) => {
     e.preventDefault()
     if (!form.business_name.trim() || !form.city || !form.industry) {
@@ -54,6 +91,11 @@ export default function AuditHome() {
     setError('')
     setRunning(true)
     setStepIndex(0)
+
+    if (import.meta.env.DEV) {
+      runAuditDev()
+      return
+    }
 
     // The audit is a single real API call — these steps aren't separately awaited, they just
     // advance at realistic intervals (8-12s each) while that one call is actually running, and
@@ -77,8 +119,9 @@ export default function AuditHome() {
       setTimeout(() => navigate(`/dashboard/audit/result/${result.audit_id}`), 500)
     } catch (err) {
       cancelled = true
+      console.error('[AuditHome] run_audit failed:', err)
       setRunning(false)
-      setError(err.message || 'Audit failed — please try again.')
+      setError('Something went wrong running the audit. Please try again. If the problem continues contact hello@nova-systems.app.')
     }
   }
 
@@ -107,8 +150,11 @@ export default function AuditHome() {
           </div>
 
           {error && (
-            <div className="max-w-2xl mb-5 px-4 py-3 rounded-lg text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171' }}>
-              {error}
+            <div className="max-w-2xl mb-5 px-5 py-4 rounded-lg text-sm flex items-center justify-between gap-4 flex-wrap" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171' }}>
+              <span>{error}</span>
+              <button type="button" onClick={resetForm} className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.05em] rounded-lg flex-shrink-0" style={{ border: '1px solid rgba(248,113,113,0.4)', color: '#f87171' }}>
+                <RotateCcw className="w-3 h-3" /> Try Again
+              </button>
             </div>
           )}
 

@@ -8,7 +8,7 @@ export const INDUSTRIES = [
   'Restaurant', 'Barbershop and Salon', 'Medical and Dental', 'Law and Finance',
   'Real Estate', 'Contractor and Trade', 'Retail Store', 'Auto Shop',
   'Gym and Fitness', 'Food Truck', 'Convenience Store', 'Nutrition Bar',
-  'Jewelry Store', 'Print and Graphics Shop', 'Other',
+  'Jewelry Store', 'Print and Graphics Shop', 'Technology', 'Professional Services', 'Other',
 ]
 
 // red <=40, orange 41-60, yellow 61-75, light green 76-85, gold 86-100

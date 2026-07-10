@@ -7,6 +7,46 @@ import { brandScore, storefrontScore, leadCaptureScore, customerExperienceScore,
 import { buildAuditPdf } from './_pdf.js'
 import { buildPitchDeck } from './_pptx.js'
 
+// Columns that are guaranteed to exist even on a database that hasn't had schema.sql re-run
+// for the newest columns yet (see supabase/schema.sql — it's idempotent, but only once someone
+// actually runs it). Used as the fallback insert so a missing-column error never loses the
+// whole audit result — better to save a partial record than none at all.
+const SAFE_COLUMNS = [
+  'business_name', 'website', 'phone', 'email', 'owner_name', 'city', 'industry',
+  'overall_score', 'score_label', 'revenue_leak_monthly', 'revenue_leak_annual',
+  'competitor_data', 'key_findings', 'outreach_status', 'created_at',
+]
+
+function pickSafeColumns(record) {
+  const out = {}
+  for (const key of SAFE_COLUMNS) if (key in record) out[key] = record[key]
+  return out
+}
+
+async function saveAuditRecord(auditRecord) {
+  if (!isSupabaseConfigured()) return null
+  try {
+    const r = await supabaseFetch('nova_ai_audits', {
+      method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(auditRecord),
+    })
+    if (r.ok) { const rows = await r.json(); return rows[0]?.id || null }
+    console.error('[nova-audit] Full save failed, retrying with safe column set:', r.status, await r.text())
+  } catch (err) {
+    console.error('[nova-audit] Full save error, retrying with safe column set:', err.message)
+  }
+
+  try {
+    const r2 = await supabaseFetch('nova_ai_audits', {
+      method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(pickSafeColumns(auditRecord)),
+    })
+    if (r2.ok) { const rows = await r2.json(); return rows[0]?.id || null }
+    console.error('[nova-audit] Safe-column save also failed:', r2.status, await r2.text())
+  } catch (err) {
+    console.error('[nova-audit] Safe-column save error (continuing — result still returned to frontend):', err.message)
+  }
+  return null
+}
+
 function checkEnvAndWarn() {
   if (!process.env.GOOGLE_API_KEY) console.warn('[nova-audit] GOOGLE_API_KEY is missing — website and Google Business scans will use defaults.')
   if (!process.env.ANTHROPIC_API_KEY) console.warn('[nova-audit] ANTHROPIC_API_KEY is missing — competitor discovery will use fallback data.')
@@ -173,18 +213,7 @@ async function handleRunAudit(req, res) {
   auditRecord.pdf_data = pdf_data
   auditRecord.pitch_deck_data = pitch_deck_data
 
-  let savedId = null
-  if (isSupabaseConfigured()) {
-    try {
-      const r = await supabaseFetch('nova_ai_audits', {
-        method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(auditRecord),
-      })
-      if (r.ok) { const rows = await r.json(); savedId = rows[0]?.id }
-      else console.error('[nova-audit] Save failed:', r.status, await r.text())
-    } catch (err) {
-      console.error('[nova-audit] Save error (continuing — result still returned to frontend):', err.message)
-    }
-  }
+  const savedId = await saveAuditRecord(auditRecord)
 
   // Delivery is a full-tier feature.
   if (tier === 'full') {
@@ -362,20 +391,31 @@ async function handleRunBulkAudits(req, res) {
   return res.status(200).json({ ok: true, completed: results.length })
 }
 
+// Top-level safety net — guarantees a JSON response is always sent, even if something in an
+// action handler throws in a way none of its own try/catches anticipated. Vercel functions that
+// crash without calling res.end() just hang until the platform times them out, which looks
+// identical to "broken" from the frontend — this turns that into a real, immediate 500.
 export default async function handler(req, res) {
-  if (setCors(req, res)) return
-  const action = typeof req.query?.action === 'string' ? req.query.action : ''
+  try {
+    if (setCors(req, res)) return
+    const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
-  switch (action) {
-    case 'run_audit':          return handleRunAudit(req, res)
-    case 'get_audits':         return handleGetAudits(req, res)
-    case 'get_audit':          return handleGetAudit(req, res)
-    case 'update_audit_status': return handleUpdateStatus(req, res)
-    case 'resend':               return handleResend(req, res)
-    case 'bulk_scan':             return handleBulkScan(req, res)
-    case 'run_bulk_audits':       return handleRunBulkAudits(req, res)
-    default:
-      if (req.method === 'GET' && !action) return handleGetAudits(req, res)
-      return res.status(400).json({ error: `Unknown action: ${action}` })
+    switch (action) {
+      case 'run_audit':          return await handleRunAudit(req, res)
+      case 'get_audits':         return await handleGetAudits(req, res)
+      case 'get_audit':          return await handleGetAudit(req, res)
+      case 'update_audit_status': return await handleUpdateStatus(req, res)
+      case 'resend':               return await handleResend(req, res)
+      case 'bulk_scan':             return await handleBulkScan(req, res)
+      case 'run_bulk_audits':       return await handleRunBulkAudits(req, res)
+      default:
+        if (req.method === 'GET' && !action) return await handleGetAudits(req, res)
+        return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+  } catch (err) {
+    console.error('[nova-audit] Unhandled error:', err)
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Something went wrong running the audit. Please try again. If the problem continues contact hello@nova-systems.app.' })
+    }
   }
 }
