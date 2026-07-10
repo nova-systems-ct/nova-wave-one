@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   Download, Send, Calendar, CheckCircle2, AlertTriangle, Zap, ArrowRight,
   Award, Store, Globe, MapPin, Share2, PhoneCall, Smile, Bot, TrendingDown, HeartPulse,
@@ -7,7 +7,6 @@ import {
 import DashboardShell from '../../components/DashboardShell'
 import { AuditAPI } from '../../lib/api'
 import { scoreMeta } from '../../lib/constants'
-import { getMockAudit, isMockAuditId } from '../../lib/mockAudit'
 
 const GOLD = '#C8A96E'
 const HOURLY_VALUE = 50 // $/hour, per spec, used to price out AI-automatable hours
@@ -56,6 +55,7 @@ function diagnose(key, score) {
 
 export default function AuditResult() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [audit, setAudit] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
@@ -63,16 +63,19 @@ export default function AuditResult() {
 
   const load = () => {
     setLoading(true)
-    // Local-dev mock results never hit the real API — they live in sessionStorage instead.
-    if (isMockAuditId(id)) {
-      try {
-        setAudit(getMockAudit(id))
-      } catch (err) {
-        console.error('[AuditResult] Failed to read mock audit:', err)
-        setAudit(null)
+    // The audit's own submit flow caches the full real result in sessionStorage so the result
+    // page renders instantly without waiting on Supabase read consistency. Any other way of
+    // reaching this URL (bookmark, shared link, reports table) falls back to fetching the real
+    // saved record from Supabase via the API.
+    try {
+      const cached = sessionStorage.getItem(`nova_audit_result_${id}`)
+      if (cached) {
+        setAudit(JSON.parse(cached))
+        setLoading(false)
+        return
       }
-      setLoading(false)
-      return
+    } catch (err) {
+      console.error('[AuditResult] Failed to read cached audit:', err)
     }
     AuditAPI.get(id)
       .then((data) => setAudit(data || null))
@@ -105,9 +108,9 @@ export default function AuditResult() {
 
   const [downloadNotice, setDownloadNotice] = useState('')
 
-  const downloadBase64 = (base64, mime, filename) => {
+  const downloadBase64 = (base64, mime, filename, label) => {
     if (!base64) {
-      setDownloadNotice('PDF generation requires the full audit to be run on the deployed version.')
+      setDownloadNotice(`${label} not available for this audit.`)
       return
     }
     setDownloadNotice('')
@@ -118,7 +121,20 @@ export default function AuditResult() {
   }
 
   if (loading) return <DashboardShell title="Nova Audit"><p style={{ color: '#666666' }}>Loading…</p></DashboardShell>
-  if (!audit) return <DashboardShell title="Nova Audit"><p style={{ color: '#666666' }}>Audit not found.</p></DashboardShell>
+  if (!audit) {
+    return (
+      <DashboardShell title="Nova Audit">
+        <p className="text-sm mb-4" style={{ color: '#666666' }}>Audit not found.</p>
+        <button
+          onClick={() => navigate('/dashboard/audit')}
+          className="px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg"
+          style={{ background: GOLD, color: '#080808' }}
+        >
+          Run a New Audit
+        </button>
+      </DashboardShell>
+    )
+  }
 
   const meta = scoreMeta(audit?.overall_score || 0)
   const competitors = Array.isArray(audit?.competitor_data) ? audit.competitor_data : []
@@ -341,10 +357,10 @@ export default function AuditResult() {
 
       {/* ACTION BUTTONS */}
       <div className="flex flex-wrap gap-3">
-        <button onClick={() => downloadBase64(audit?.pdf_data, 'application/pdf', `${audit?.business_name || 'business'}-nova-intelligence-report.pdf`)} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: GOLD, color: '#080808' }}>
+        <button onClick={() => downloadBase64(audit?.pdf_data, 'application/pdf', `${audit?.business_name || 'business'}-nova-intelligence-report.pdf`, 'PDF')} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: GOLD, color: '#080808' }}>
           <Download className="w-3.5 h-3.5" /> Download Nova Intelligence Report
         </button>
-        <button onClick={() => downloadBase64(audit?.pitch_deck_data, 'application/vnd.openxmlformats-officedocument.presentationml.presentation', `${audit?.business_name || 'business'}-pitch.pptx`)} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: `1px solid ${GOLD}`, color: GOLD }}>
+        <button onClick={() => downloadBase64(audit?.pitch_deck_data, 'application/vnd.openxmlformats-officedocument.presentationml.presentation', `${audit?.business_name || 'business'}-nova-pitch-deck.pptx`, 'Pitch deck')} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: `1px solid ${GOLD}`, color: GOLD }}>
           <Download className="w-3.5 h-3.5" /> Download Pitch Deck
         </button>
         <a href="https://nova-systems.app/welcome" target="_blank" rel="noreferrer" className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: '#000', color: '#fff', border: '1px solid #2A2A2A' }}>

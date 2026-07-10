@@ -4,7 +4,6 @@ import { Check, Search, Layers, ListChecks, DollarSign, Map, RotateCcw } from 'l
 import DashboardShell from '../../components/DashboardShell'
 import { CT_CITIES, INDUSTRIES } from '../../lib/constants'
 import { AuditAPI } from '../../lib/api'
-import { buildMockAudit, saveMockAudit } from '../../lib/mockAudit'
 
 const GOLD = '#C8A96E'
 
@@ -53,35 +52,6 @@ export default function AuditHome() {
     setStepIndex(0)
   }
 
-  const runAuditDev = () => {
-    // Vercel serverless functions (api/nova-audit) do not run under `vite dev` — there is no
-    // backend to call locally. Play the same 10-step animation on a fixed 3s cadence, then hand
-    // off to a realistic mock result so the full result page can be built and tested without a
-    // deployment. Production never takes this path — see the import.meta.env.DEV check below.
-    let cancelled = false
-    let i = 0
-    const tick = () => {
-      if (cancelled) return
-      i += 1
-      setStepIndex(i)
-      if (i >= STEPS.length) {
-        try {
-          const mock = buildMockAudit(form)
-          saveMockAudit(mock)
-          setTimeout(() => navigate(`/dashboard/audit/result/${mock.audit_id}`), 400)
-        } catch (err) {
-          console.error('[AuditHome] Failed to build mock audit:', err)
-          setRunning(false)
-          setError('Something went wrong running the audit. Please try again. If the problem continues contact hello@nova-systems.app.')
-        }
-        return
-      }
-      setTimeout(tick, 3000)
-    }
-    setTimeout(tick, 3000)
-    return () => { cancelled = true }
-  }
-
   const runAudit = async (e) => {
     e.preventDefault()
     if (!form.business_name.trim() || !form.city || !form.industry) {
@@ -92,14 +62,10 @@ export default function AuditHome() {
     setRunning(true)
     setStepIndex(0)
 
-    if (import.meta.env.DEV) {
-      runAuditDev()
-      return
-    }
-
-    // The audit is a single real API call — these steps aren't separately awaited, they just
-    // advance at realistic intervals (8-12s each) while that one call is actually running, and
-    // stop advancing once they reach the last step rather than faking completion early.
+    // The audit is a single real API call that can take 30-90 seconds — these steps aren't
+    // separately awaited, they just advance at realistic intervals while that one call is
+    // actually running, and stop advancing once they reach the last step rather than faking
+    // completion early. A 120s hard timeout guards against the call hanging indefinitely.
     let cancelled = false
     const scheduleNextStep = (i) => {
       if (cancelled || i >= STEPS.length - 1) return
@@ -112,16 +78,22 @@ export default function AuditHome() {
     }
     scheduleNextStep(0)
 
+    const timeoutMs = 120000
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
+
     try {
-      const result = await AuditAPI.run(form)
+      const result = await Promise.race([AuditAPI.run(form), timeout])
       cancelled = true
       setStepIndex(STEPS.length)
+      try { sessionStorage.setItem(`nova_audit_result_${result.audit_id}`, JSON.stringify(result)) } catch {}
       setTimeout(() => navigate(`/dashboard/audit/result/${result.audit_id}`), 500)
     } catch (err) {
       cancelled = true
       console.error('[AuditHome] run_audit failed:', err)
       setRunning(false)
-      setError('Something went wrong running the audit. Please try again. If the problem continues contact hello@nova-systems.app.')
+      setError(err?.message === 'timeout'
+        ? 'The audit took longer than expected. Try again or contact hello@nova-systems.app.'
+        : 'Something went wrong running the audit. Please try again. If the problem continues contact hello@nova-systems.app.')
     }
   }
 
