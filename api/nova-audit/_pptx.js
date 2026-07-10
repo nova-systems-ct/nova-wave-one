@@ -20,7 +20,7 @@ export async function buildPitchDeck(audit) {
   let s = bgSlide()
   s.addText('NOVA SYSTEMS', { x: 0.5, y: 0.4, fontSize: 12, color: GOLD, bold: true, charSpacing: 3 })
   s.addText(audit.business_name || 'Business', { x: 0.5, y: 2.0, fontSize: 36, color: WHITE, bold: true, w: 9 })
-  s.addText('BUSINESS INTELLIGENCE AUDIT', { x: 0.5, y: 2.9, fontSize: 14, color: GRAY })
+  s.addText('NOVA INTELLIGENCE REPORT', { x: 0.5, y: 2.9, fontSize: 14, color: GOLD, bold: true })
   s.addText(new Date(audit.created_at || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), { x: 0.5, y: 3.3, fontSize: 11, color: GRAY })
 
   // Slide 2 — Score overview
@@ -73,9 +73,9 @@ export async function buildPitchDeck(audit) {
   // Slide 6 — Revenue leak
   s = bgSlide()
   s.addText('Revenue Leak', { x: 0.5, y: 0.4, fontSize: 20, color: WHITE, bold: true })
-  s.addText(`$${(audit.revenue_leak_monthly || 0).toLocaleString()}`, { x: 0.5, y: 1.3, fontSize: 48, color: GOLD, bold: true })
-  s.addText('estimated monthly revenue being lost', { x: 0.5, y: 2.3, fontSize: 12, color: GRAY })
-  s.addText(`$${(audit.revenue_leak_annual || 0).toLocaleString()} per year — this is recoverable.`, { x: 0.5, y: 2.9, fontSize: 13, color: WHITE })
+  s.addText(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, { x: 0.5, y: 1.3, fontSize: 48, color: GOLD, bold: true })
+  s.addText('estimated annual revenue being lost', { x: 0.5, y: 2.3, fontSize: 12, color: GRAY })
+  s.addText(`$${(audit.revenue_leak_monthly || 0).toLocaleString()} per month — this is recoverable.`, { x: 0.5, y: 2.9, fontSize: 13, color: WHITE })
 
   // Slide 7 — Solution
   s = bgSlide()

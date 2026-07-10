@@ -1,8 +1,9 @@
 import { setCors } from '../_cors.js'
 import { sanitize, sanitizeEmail, sanitizePhone, sanitizeUrl } from '../_sanitize.js'
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
-import { scanWebsite, scanGoogleBusiness, scanSocial, testPhone, testEmail, discoverCompetitors } from './_scans.js'
+import { scanWebsite, scanGoogleBusiness, scanWebsiteFeatures, testPhone, testEmail, discoverCompetitors } from './_scans.js'
 import { calculateRevenueLeak, overallScore, scoreLabel, competitiveScore } from './_leak.js'
+import { brandScore, storefrontScore, leadCaptureScore, customerExperienceScore, aiReadinessScore, buildPriorityRoadmap } from './_categories.js'
 import { buildAuditPdf } from './_pdf.js'
 import { buildPitchDeck } from './_pptx.js'
 
@@ -13,26 +14,38 @@ function checkEnvAndWarn() {
   if (!process.env.RESEND_API_KEY) console.warn('[nova-audit] RESEND_API_KEY is missing — email test and delivery will be skipped.')
 }
 
-function buildFindings({ business_name, website, googleBiz, revenueLeak, performanceScore, phoneScore, googleScore, fcp, competitors }) {
-  const findings = []
+// Ties each under-70 category to the matching dollar figure from the revenue leak breakdown,
+// so every finding is both specific and dollar-focused, sorted with the biggest leak first.
+function buildFindings({ business_name, scores, revenueLeak, fcp, googleBiz, competitors }) {
+  const candidates = []
 
-  if (performanceScore != null && performanceScore < 50) {
-    findings.push(`Your website takes ${fcp || 'several seconds'} to load on mobile. You are losing an estimated 53% of visitors before they see your phone number.`)
-  } else if (!website) {
-    findings.push(`${business_name} has no website on file, which typically means losing an estimated 80% of potential online leads.`)
-  } else if (performanceScore != null && performanceScore < 70) {
-    findings.push(`Your website scores ${performanceScore}/100 on mobile — roughly a quarter of mobile visitors are dropping off before converting.`)
+  if (scores.website == null || scores.website < 70) {
+    const problem = scores.website == null
+      ? `${business_name} has no measurable website performance data on file`
+      : `Your website takes ${fcp || 'several seconds'} to load on mobile`
+    candidates.push({ text: problem, amount: revenueLeak.breakdown.website_abandonment })
+  }
+  if (scores.google < 70) {
+    const problem = !googleBiz.found
+      ? `${business_name} has no Google Business profile — you are invisible to customers searching locally right now`
+      : `Your Google Business profile is incomplete or under-optimized`
+    candidates.push({ text: problem, amount: revenueLeak.breakdown.google_visibility })
+  }
+  if (scores.phone < 70) {
+    candidates.push({ text: 'Our test call to your number did not clearly connect', amount: revenueLeak.breakdown.missed_calls })
+  }
+  if (scores.social < 70) {
+    candidates.push({ text: 'Your social media presence is thin, so DMs and comments are likely going unanswered', amount: revenueLeak.breakdown.social_engagement })
+  }
+  if (scores.leadCapture < 70) {
+    candidates.push({ text: 'Contacts across phone, email, and your website form are not being captured consistently', amount: revenueLeak.breakdown.lead_capture })
+  }
+  if (scores.customerExperience < 70) {
+    candidates.push({ text: 'There is no visible booking system, loyalty program, or follow-up process on your website', amount: revenueLeak.breakdown.customer_retention })
   }
 
-  if (phoneScore != null && phoneScore < 40) {
-    findings.push(`Our test call to your number went unanswered. Every missed call is a potential customer calling your competitor.`)
-  }
-
-  if (googleScore != null && googleScore < 40) {
-    findings.push(`Your Google Business profile is incomplete or missing. You are invisible to customers searching locally right now.`)
-  } else if (googleBiz.found && (googleBiz.reviews || 0) < 10) {
-    findings.push(`Your Google Business profile has only ${googleBiz.reviews || 0} reviews, which lowers your discovery rate against local competitors.`)
-  }
+  candidates.sort((a, b) => (b.amount || 0) - (a.amount || 0))
+  const findings = candidates.slice(0, 5).map((c) => `${c.text}. This is costing you an estimated $${(c.amount || 0).toLocaleString()} per month.`)
 
   if (competitors[0]) {
     const advantages = Array.isArray(competitors[0].advantages) ? competitors[0].advantages.slice(0, 2).join(' and ') : 'a stronger online presence'
@@ -42,7 +55,7 @@ function buildFindings({ business_name, website, googleBiz, revenueLeak, perform
   const gapCount = Object.values(revenueLeak.breakdown).filter((v) => v > 0).length
   findings.push(`We estimate you are losing $${revenueLeak.monthly.toLocaleString()} per month in recoverable revenue across ${gapCount} identified gap${gapCount === 1 ? '' : 's'}.`)
 
-  return findings.slice(0, 5)
+  return findings
 }
 
 async function handleRunAudit(req, res) {
@@ -57,12 +70,13 @@ async function handleRunAudit(req, res) {
   const owner_name = sanitize(b.owner_name, 100)
   const city = sanitize(b.city, 80)
   const industry = sanitize(b.industry, 80)
+  const tier = b.tier === 'free' ? 'free' : 'full' // the dashboard always runs full; a public page would pass tier: 'free'
 
   if (!business_name || !city || !industry) {
     return res.status(400).json({ error: 'business_name, city, and industry are required' })
   }
 
-  // Step 1 — cache check (same website, last 7 days)
+  // Cache check (same website, last 7 days)
   if (website_url && isSupabaseConfigured()) {
     try {
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -74,64 +88,91 @@ async function handleRunAudit(req, res) {
     }
   }
 
-  // Steps 2-6 — run every scan in parallel; each one fails soft with a documented default.
-  const [websiteScan, googleBiz, social, phoneTest, emailTest, competitors] = await Promise.all([
+  // Core scans always run (free and full). Phone/email tests only run on the full tier — they
+  // cost real money (a real call, a real send) and the free tier is meant to be free to offer.
+  const scanPromises = [
     scanWebsite(website_url),
     scanGoogleBusiness({ businessName: business_name, city }),
-    scanSocial(website_url),
-    testPhone(phone),
-    testEmail(email, business_name),
+    scanWebsiteFeatures(website_url),
     discoverCompetitors({ businessName: business_name, industry, city }),
-  ])
+  ]
+  if (tier === 'full') {
+    scanPromises.push(testPhone(phone), testEmail(email, business_name))
+  }
+  const [websiteScan, googleBiz, features, competitors, phoneTest, emailTest] = await Promise.all(scanPromises)
 
+  const social = features.social
   const google_rating = googleBiz.rating ?? null
   const google_reviews = googleBiz.reviews ?? null
 
-  // Step 8 — scores (website_score falls back to 0, not excluded, per spec)
+  // Website performance falls back to 0 (not excluded), matching the original scoring spec.
   const website_score = website_url ? (websiteScan.performance_score ?? 0) : 0
   const google_score = googleBiz.score
-  const phone_score = phoneTest.phone_score
-  const email_score = emailTest.email_score
   const social_score = social.score
+  const phone_score = tier === 'full' ? phoneTest.phone_score : null
+  const email_score = tier === 'full' ? emailTest.email_score : null
   const competitive_score = competitiveScore(competitors)
+
+  const brand_score = brandScore({
+    hasWebsite: !!website_url,
+    googleBusinessNameMatches: googleBiz.found && googleBiz.name && business_name && googleBiz.name.toLowerCase().includes(business_name.toLowerCase().split(' ')[0]),
+    hasLogo: features.hasLogo,
+    hasSocialPresence: social.platforms.length > 0,
+    email,
+  })
+  const storefront_score = storefrontScore({ googleFound: googleBiz.found, photoCount: googleBiz.photo_count, rating: googleBiz.rating, hasHours: !!googleBiz.opening_hours })
+  const lead_capture_score = leadCaptureScore({
+    phoneTested: tier === 'full' && !!phoneTest?.tested, phoneCallStatus: phoneTest?.status,
+    emailTested: tier === 'full' && !!emailTest?.tested, hasContactForm: features.hasContactForm,
+  })
+  const customer_experience_score = customerExperienceScore({
+    hasWebsite: !!website_url, hasBookingWidget: features.hasBookingWidget,
+    hasLoyaltyMention: features.hasLoyaltyMention, hasFAQ: features.hasFAQ, hasTestimonials: features.hasTestimonials,
+  })
+  const ai_readiness_score = aiReadinessScore({ phoneScore: phone_score, emailScore: email_score, socialScore: social_score, customerExperienceScore: customer_experience_score })
+
   const overall_score = overallScore({
     website: website_score, google: google_score, phone: phone_score, email: email_score, social: social_score, competitive: competitive_score,
   })
 
-  // Step 7 — revenue leak (pure math)
   const revenueLeak = calculateRevenueLeak({
     industry, phoneScore: phone_score, performanceScore: websiteScan.performance_score, googleScore: google_score,
+    socialScore: social_score, leadCaptureScore: lead_capture_score, customerExperienceScore: customer_experience_score,
   })
 
-  // Step 9 — key findings
-  const key_findings = buildFindings({
-    business_name, website: website_url, googleBiz, revenueLeak,
-    performanceScore: websiteScan.performance_score, phoneScore: phone_score, googleScore: google_score,
-    fcp: websiteScan.fcp, competitors,
+  const scoresForFindings = { website: website_score, google: google_score, phone: phone_score ?? 50, social: social_score, leadCapture: lead_capture_score, customerExperience: customer_experience_score }
+  const key_findings = buildFindings({ business_name, scores: scoresForFindings, revenueLeak, fcp: websiteScan.fcp, googleBiz, competitors })
+
+  const priority_roadmap = buildPriorityRoadmap({
+    scores: { google: google_score, leadCapture: lead_capture_score, brand: brand_score, phone: phone_score ?? 50, email: email_score ?? 70, website: website_score, social: social_score, storefront: storefront_score, customerExperience: customer_experience_score },
+    revenueLeak, businessName: business_name,
   })
 
   const auditRecord = {
     business_name, website: website_url || null, phone: phone || null, email: email || null,
-    owner_name: owner_name || null, city, industry,
+    owner_name: owner_name || null, city, industry, tier,
     performance_score: website_score, google_score, phone_score, email_score,
-    social_score, competitive_score, overall_score, score_label: scoreLabel(overall_score),
+    social_score, competitive_score, brand_score, storefront_score,
+    lead_capture_score, customer_experience_score, ai_readiness_score,
+    overall_score, score_label: scoreLabel(overall_score),
     revenue_leak_monthly: revenueLeak.monthly, revenue_leak_annual: revenueLeak.annual,
     revenue_leak_breakdown: revenueLeak.breakdown,
-    competitor_data: competitors, key_findings,
-    phone_test_result: phoneTest, email_test_result: emailTest,
+    competitor_data: competitors, key_findings, priority_roadmap,
+    phone_test_result: tier === 'full' ? phoneTest : null,
+    email_test_result: tier === 'full' ? emailTest : null,
     google_rating, google_reviews,
     outreach_status: 'pending', created_at: new Date().toISOString(),
   }
 
-  // Step 10 — generate PDF + pitch deck
+  // PDF and pitch deck are a full-tier feature — the free tier is meant to be genuinely free to run.
   let pdf_data = null, pitch_deck_data = null
-  try { pdf_data = buildAuditPdf(auditRecord) } catch (err) { console.error('[nova-audit] PDF generation failed (continuing without it):', err.message) }
-  try { pitch_deck_data = await buildPitchDeck(auditRecord) } catch (err) { console.error('[nova-audit] Pitch deck generation failed (continuing without it):', err.message) }
-
+  if (tier === 'full') {
+    try { pdf_data = buildAuditPdf(auditRecord) } catch (err) { console.error('[nova-audit] PDF generation failed (continuing without it):', err.message) }
+    try { pitch_deck_data = await buildPitchDeck(auditRecord) } catch (err) { console.error('[nova-audit] Pitch deck generation failed (continuing without it):', err.message) }
+  }
   auditRecord.pdf_data = pdf_data
   auditRecord.pitch_deck_data = pitch_deck_data
 
-  // Step 11 — save
   let savedId = null
   if (isSupabaseConfigured()) {
     try {
@@ -145,43 +186,44 @@ async function handleRunAudit(req, res) {
     }
   }
 
-  // Step 12 — deliver
-  if (phone && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
-    try {
-      const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
-      await fetch(`https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`, {
-        method: 'POST',
-        headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          To: phone, From: process.env.TWILIO_PHONE_NUMBER,
-          Body: `Hey ${owner_name || 'there'}, Isaac here from Nova Systems. Your free Business Intelligence Audit for ${business_name} just came in. Score: ${overall_score}/100. We found $${revenueLeak.monthly.toLocaleString()} in monthly recoverable revenue. Check your email for the full report. Book a free meeting: nova-systems.app/welcome.`,
-        }).toString(),
-      })
-    } catch (err) { console.error('[nova-audit] SMS delivery failed (non-fatal):', err.message) }
-  }
-  if (email && process.env.RESEND_API_KEY) {
-    try {
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: 'Nova Systems <noreply@nova-systems.app>',
-          to: [email],
-          subject: `Your Nova Systems Business Audit — ${business_name} — ${overall_score}/100`,
-          html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#111;">
-            <div style="background:#080808;padding:24px;text-align:center;"><span style="color:#C8A96E;font-weight:900;letter-spacing:2px;">NOVA SYSTEMS</span></div>
-            <div style="padding:28px;border:1px solid #eee;border-top:none;">
-              <h2>Your score: ${overall_score}/100 — ${scoreLabel(overall_score)}</h2>
-              <p>Estimated monthly revenue being lost: <strong>$${revenueLeak.monthly.toLocaleString()}</strong></p>
-              <ul>${key_findings.map((f) => `<li>${f}</li>`).join('')}</ul>
-              <p><a href="https://nova-systems.app/welcome" style="background:#C8A96E;color:#080808;padding:12px 20px;text-decoration:none;border-radius:6px;font-weight:bold;">Book Your Free Strategy Meeting</a></p>
-            </div></div>`,
-        }),
-      })
-    } catch (err) { console.error('[nova-audit] Email delivery failed (non-fatal):', err.message) }
+  // Delivery is a full-tier feature.
+  if (tier === 'full') {
+    if (phone && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
+      try {
+        const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+        await fetch(`https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`, {
+          method: 'POST',
+          headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            To: phone, From: process.env.TWILIO_PHONE_NUMBER,
+            Body: `Hey ${owner_name || 'there'}, Isaac here from Nova Systems. Your Nova Intelligence Report for ${business_name} just came in. Score: ${overall_score}/100. We found $${revenueLeak.monthly.toLocaleString()} in monthly recoverable revenue. Check your email for the full report. Book a free meeting: nova-systems.app/welcome.`,
+          }).toString(),
+        })
+      } catch (err) { console.error('[nova-audit] SMS delivery failed (non-fatal):', err.message) }
+    }
+    if (email && process.env.RESEND_API_KEY) {
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Nova Systems <noreply@nova-systems.app>',
+            to: [email],
+            subject: `Your Nova Intelligence Report — ${business_name} — ${overall_score}/100`,
+            html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#111;">
+              <div style="background:#080808;padding:24px;text-align:center;"><span style="color:#C8A96E;font-weight:900;letter-spacing:2px;">NOVA SYSTEMS</span></div>
+              <div style="padding:28px;border:1px solid #eee;border-top:none;">
+                <h2>Your score: ${overall_score}/100 — ${scoreLabel(overall_score)}</h2>
+                <p>Estimated annual revenue being lost: <strong>$${revenueLeak.annual.toLocaleString()}</strong></p>
+                <ul>${key_findings.map((f) => `<li>${f}</li>`).join('')}</ul>
+                <p><a href="https://nova-systems.app/welcome" style="background:#C8A96E;color:#080808;padding:12px 20px;text-decoration:none;border-radius:6px;font-weight:bold;">Book Your Free Strategy Meeting</a></p>
+              </div></div>`,
+          }),
+        })
+      } catch (err) { console.error('[nova-audit] Email delivery failed (non-fatal):', err.message) }
+    }
   }
 
-  // Step 13 — return everything, including audit_id, so the frontend can redirect to the result page
   return res.status(200).json({ ...auditRecord, audit_id: savedId })
 }
 
@@ -236,7 +278,7 @@ async function handleResend(req, res) {
         headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           To: audit.phone, From: process.env.TWILIO_PHONE_NUMBER,
-          Body: `Hey ${audit.owner_name || 'there'}, Isaac here from Nova Systems — resending your audit for ${audit.business_name}. Score: ${audit.overall_score}/100, $${(audit.revenue_leak_monthly || 0).toLocaleString()}/mo recoverable. Check your email for the full report.`,
+          Body: `Hey ${audit.owner_name || 'there'}, Isaac here from Nova Systems — resending your Nova Intelligence Report for ${audit.business_name}. Score: ${audit.overall_score}/100, $${(audit.revenue_leak_annual || 0).toLocaleString()}/yr recoverable. Check your email for the full report.`,
         }).toString(),
       })
       smsOk = smsRes.ok
@@ -250,12 +292,12 @@ async function handleResend(req, res) {
         body: JSON.stringify({
           from: 'Nova Systems <noreply@nova-systems.app>',
           to: [audit.email],
-          subject: `Your Nova Systems Business Audit — ${audit.business_name} — ${audit.overall_score}/100`,
+          subject: `Your Nova Intelligence Report — ${audit.business_name} — ${audit.overall_score}/100`,
           html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#111;">
             <div style="background:#080808;padding:24px;text-align:center;"><span style="color:#C8A96E;font-weight:900;letter-spacing:2px;">NOVA SYSTEMS</span></div>
             <div style="padding:28px;border:1px solid #eee;border-top:none;">
               <h2>Your score: ${audit.overall_score}/100 — ${audit.score_label}</h2>
-              <p>Estimated monthly revenue being lost: <strong>$${(audit.revenue_leak_monthly || 0).toLocaleString()}</strong></p>
+              <p>Estimated annual revenue being lost: <strong>$${(audit.revenue_leak_annual || 0).toLocaleString()}</strong></p>
               <ul>${(audit.key_findings || []).map((f) => `<li>${f}</li>`).join('')}</ul>
               <p><a href="https://nova-systems.app/welcome" style="background:#C8A96E;color:#080808;padding:12px 20px;text-decoration:none;border-radius:6px;font-weight:bold;">Book Your Free Strategy Meeting</a></p>
             </div></div>`,
@@ -308,7 +350,7 @@ async function handleRunBulkAudits(req, res) {
   const results = []
   for (const c of companies) {
     try {
-      const fakeReq = { method: 'POST', body: { business_name: c.name, city, industry, phone: '', email: '', website_url: '' } }
+      const fakeReq = { method: 'POST', body: { business_name: c.name, city, industry, phone: '', email: '', website_url: '', tier: 'full' } }
       const fakeRes = { status: () => fakeRes, json: (d) => { results.push(d); return d } }
       await handleRunAudit(fakeReq, fakeRes)
     } catch (err) {

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, Search, Layers } from 'lucide-react'
+import { Check, Search, Layers, ListChecks, DollarSign, Map } from 'lucide-react'
 import DashboardShell from '../../components/DashboardShell'
 import { CT_CITIES, INDUSTRIES } from '../../lib/constants'
 import { AuditAPI } from '../../lib/api'
@@ -86,9 +86,24 @@ export default function AuditHome() {
     <DashboardShell title="Nova Audit">
       {!running ? (
         <>
-          <div className="max-w-2xl mb-8">
-            <h2 className="text-2xl font-bold text-white mb-2">Run a Business Intelligence Audit</h2>
-            <p className="text-sm" style={{ color: '#999999' }}>Enter any business. Our system scans everything automatically.</p>
+          <div className="max-w-2xl mb-6">
+            <h2 className="text-3xl font-bold text-white mb-3 leading-tight">Find Every Place Your Business Is Losing Customers.</h2>
+            <p className="text-sm leading-relaxed" style={{ color: '#999999' }}>
+              Nova Audit is a complete business intelligence scan. In 90 seconds we identify every revenue leak, every missed opportunity, and every gap your competitors are exploiting. Then we show you exactly how to fix it.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-6 mb-8">
+            {[
+              { icon: ListChecks, label: '10 Audit Categories' },
+              { icon: DollarSign, label: 'Real Revenue Numbers' },
+              { icon: Map, label: 'Priority Roadmap' },
+            ].map(({ icon: Icon, label }) => (
+              <div key={label} className="flex items-center gap-2">
+                <Icon className="w-4 h-4" style={{ color: GOLD }} />
+                <span className="text-xs font-semibold" style={{ color: '#999999' }}>{label}</span>
+              </div>
+            ))}
           </div>
 
           {error && (
@@ -129,9 +144,11 @@ export default function AuditHome() {
             </div>
 
             <button type="submit" className="w-full mt-3 py-4 text-xs font-bold tracking-[0.2em] uppercase rounded-lg" style={{ background: GOLD, color: '#080808' }}>
-              Run Audit
+              Run My Free Business Audit
             </button>
           </form>
+
+          <p className="max-w-2xl text-xs mb-6" style={{ color: '#666666' }}>No credit card. No commitment. Just answers.</p>
 
           <button
             onClick={() => setShowBulk((v) => !v)}

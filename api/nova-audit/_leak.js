@@ -44,7 +44,13 @@ export function webLossPct(performanceScore) {
   return 0.10
 }
 
-export function calculateRevenueLeak({ industry, phoneScore, performanceScore, googleScore }) {
+// Baseline monthly volume assumptions used by the percentage-based leak formulas below —
+// industry-agnostic placeholders (same role as the "500 estimated monthly visitors" and
+// "200 estimated monthly searches" constants already in use), not a per-business measurement.
+const ESTIMATED_MONTHLY_CONTACTS = 40
+const ESTIMATED_MONTHLY_CUSTOMERS = 60
+
+export function calculateRevenueLeak({ industry, phoneScore, performanceScore, googleScore, socialScore, leadCaptureScore, customerExperienceScore }) {
   const avg = avgTransaction(industry)
 
   const missedCalls = missedCallsPerWeek(phoneScore)
@@ -53,16 +59,33 @@ export function calculateRevenueLeak({ industry, phoneScore, performanceScore, g
   const lossPct = webLossPct(performanceScore)
   const monthlyWebLeak = 500 * lossPct * avg * 0.08
 
-  const monthlyGoogleLeak = (googleScore != null && googleScore < 40) ? avg * 50 * 0.20 : 0
+  // Google visibility leak — under 60, an estimated 30% of local search traffic goes to competitors.
+  const googleLossPct = (googleScore != null && googleScore < 60) ? 0.30 : 0
+  const monthlyGoogleLeak = 200 * googleLossPct * avg * 0.15
 
-  const totalMonthly = Math.round((monthlyCallLeak + monthlyWebLeak + monthlyGoogleLeak) / 50) * 50
+  // Social engagement leak — under 50, an estimated 15 leads/month go cold from ignored DMs/comments.
+  const coldLeads = (socialScore != null && socialScore < 50) ? 15 : 0
+  const monthlySocialLeak = coldLeads * avg * 0.20
+
+  // Lead capture leak — under 60, an estimated 25% of contacts go unanswered across all channels.
+  const unansweredPct = (leadCaptureScore != null && leadCaptureScore < 60) ? 0.25 : 0
+  const monthlyLeadCaptureLeak = ESTIMATED_MONTHLY_CONTACTS * unansweredPct * avg * 0.30
+
+  // Customer retention leak — under 60, an estimated 20% of customers never return.
+  const churnPct = (customerExperienceScore != null && customerExperienceScore < 60) ? 0.20 : 0
+  const monthlyRetentionLeak = ESTIMATED_MONTHLY_CUSTOMERS * churnPct * avg
+
+  const totalMonthly = Math.round((monthlyCallLeak + monthlyWebLeak + monthlyGoogleLeak + monthlySocialLeak + monthlyLeadCaptureLeak + monthlyRetentionLeak) / 100) * 100
   const totalAnnual = totalMonthly * 12
 
   return {
     breakdown: {
       missed_calls: Math.round(monthlyCallLeak),
       website_abandonment: Math.round(monthlyWebLeak),
-      weak_google_presence: Math.round(monthlyGoogleLeak),
+      google_visibility: Math.round(monthlyGoogleLeak),
+      social_engagement: Math.round(monthlySocialLeak),
+      lead_capture: Math.round(monthlyLeadCaptureLeak),
+      customer_retention: Math.round(monthlyRetentionLeak),
     },
     monthly: totalMonthly,
     annual: totalAnnual,

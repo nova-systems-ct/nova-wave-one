@@ -44,10 +44,12 @@ function coverPage(doc, audit) {
   doc.setFont('helvetica', 'bold')
   doc.text(audit.business_name || 'Business', 20, 130, { maxWidth: 170 })
 
-  doc.setTextColor(...GRAY)
+  doc.setTextColor(...GOLD)
   doc.setFontSize(12)
+  doc.setFont('helvetica', 'bold')
+  doc.text('NOVA INTELLIGENCE REPORT', 20, 142)
+  doc.setTextColor(...GRAY)
   doc.setFont('helvetica', 'normal')
-  doc.text('BUSINESS INTELLIGENCE AUDIT', 20, 142)
   doc.text(`Prepared for ${audit.owner_name || audit.business_name}`, 20, 150)
   doc.text(new Date(audit.created_at || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), 20, 158)
 
@@ -100,7 +102,7 @@ function execSummaryPage(doc, audit) {
   header(doc, 'Executive Summary')
   quadrant(doc, 20, 55, 'Website', audit.performance_score)
   quadrant(doc, 112, 55, 'Online Presence', audit.google_score)
-  quadrant(doc, 20, 95, 'Lead Capture', Math.round(((audit.phone_score || 0) + (audit.email_score || 0)) / 2))
+  quadrant(doc, 20, 95, 'Lead Capture', audit.lead_capture_score)
   quadrant(doc, 112, 95, 'Competitive Position', audit.competitive_score)
 
   let y = 145
@@ -124,11 +126,81 @@ function execSummaryPage(doc, audit) {
   y += 10
   doc.setTextColor(...GRAY)
   doc.setFontSize(9)
-  doc.text('ESTIMATED MONTHLY REVENUE BEING LOST', 20, y)
+  doc.text('ESTIMATED ANNUAL REVENUE BEING LOST', 20, y)
   doc.setTextColor(...GOLD)
   doc.setFontSize(28)
   doc.setFont('helvetica', 'bold')
-  doc.text(`$${(audit.revenue_leak_monthly || 0).toLocaleString()}`, 20, y + 14)
+  doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 20, y + 14)
+}
+
+function categoryGridPage(doc, audit) {
+  header(doc, '10-Category Intelligence Score')
+  const categories = [
+    ['Brand', audit.brand_score],
+    ['Storefront', audit.storefront_score],
+    ['Website', audit.performance_score],
+    ['Google', audit.google_score],
+    ['Social Media', audit.social_score],
+    ['Lead Capture', audit.lead_capture_score],
+    ['Customer Experience', audit.customer_experience_score],
+    ['AI Readiness', audit.ai_readiness_score],
+    ['Revenue Health', Math.max(0, 100 - Math.min(100, Math.round((audit.revenue_leak_monthly || 0) / 100)))],
+    ['Overall Health', audit.overall_score],
+  ]
+  const cols = 2, cardW = 82, cardH = 42, startX = 20, startY = 50, gapX = 8, gapY = 8
+  categories.forEach(([label, score], i) => {
+    const col = i % cols, row = Math.floor(i / cols)
+    const x = startX + col * (cardW + gapX)
+    const y = startY + row * (cardH + gapY)
+    doc.setDrawColor(60, 60, 60)
+    doc.roundedRect(x, y, cardW, cardH, 2, 2, 'S')
+    doc.setTextColor(...GRAY)
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.text(label.toUpperCase(), x + 6, y + 12)
+    doc.setTextColor(...scoreColor(score))
+    doc.setFontSize(22)
+    doc.text(String(score ?? '—'), x + 6, y + 30)
+    // color bar
+    doc.setDrawColor(40, 40, 40)
+    doc.roundedRect(x + 6, y + 34, cardW - 12, 3, 1.5, 1.5, 'S')
+    const pct = Math.min(100, Math.max(0, score || 0))
+    if (pct > 0) { doc.setFillColor(...scoreColor(score)); doc.roundedRect(x + 6, y + 34, (cardW - 12) * (pct / 100), 3, 1.5, 1.5, 'F') }
+  })
+}
+
+function roadmapPage(doc, audit) {
+  header(doc, 'Priority Roadmap')
+  const roadmap = audit.priority_roadmap || { fix_today: [], fix_this_month: [], fix_this_quarter: [] }
+  const sections = [
+    ['FIX TODAY', GOLD, roadmap.fix_today],
+    ['FIX THIS MONTH — WAVE ONE', GOLD, roadmap.fix_this_month],
+    ['FIX THIS QUARTER — WAVE TWO', GRAY, roadmap.fix_this_quarter],
+  ]
+  let y = 50
+  sections.forEach(([title, color, items]) => {
+    if (!items?.length) return
+    doc.setTextColor(...color)
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text(title, 20, y)
+    y += 8
+    items.forEach((item) => {
+      doc.setTextColor(...WHITE)
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      const actionLines = doc.splitTextToSize(`• ${item.action}`, 165)
+      doc.text(actionLines, 20, y)
+      y += actionLines.length * 5
+      doc.setTextColor(...GRAY)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      const impactLines = doc.splitTextToSize(item.impact || '', 160)
+      doc.text(impactLines, 25, y)
+      y += impactLines.length * 4.5 + 6
+    })
+    y += 4
+  })
 }
 
 function websitePage(doc, audit) {
@@ -197,7 +269,7 @@ function responsePage(doc, audit) {
   doc.roundedRect(20, 145, 170, 26, 2, 2, 'S')
   doc.setTextColor(...GOLD)
   doc.setFontSize(9)
-  doc.text('Slow or missed contact is a direct, fixable revenue leak — see page 6 for the dollar impact.', 25, 158, { maxWidth: 160 })
+  doc.text('Slow or missed contact is a direct, fixable revenue leak — see the Revenue Leak Breakdown for the dollar impact.', 25, 158, { maxWidth: 160 })
 }
 
 function competitorPage(doc, audit) {
@@ -244,33 +316,51 @@ function revenuePage(doc, audit) {
   header(doc, 'Revenue Leak Breakdown')
   doc.setTextColor(...GRAY)
   doc.setFontSize(9)
-  doc.text('ESTIMATED MONTHLY REVENUE BEING LOST', 20, 55)
+  doc.text('ESTIMATED ANNUAL REVENUE BEING LOST', 20, 55)
   doc.setTextColor(...GOLD)
   doc.setFontSize(36)
   doc.setFont('helvetica', 'bold')
-  doc.text(`$${(audit.revenue_leak_monthly || 0).toLocaleString()}`, 20, 75)
+  doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 20, 75)
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`$${(audit.revenue_leak_monthly || 0).toLocaleString()} per month`, 20, 83)
 
   const breakdown = audit.revenue_leak_breakdown || {}
-  let y = 95
+  const sortedEntries = Object.entries(breakdown).sort((a, b) => Number(b[1]) - Number(a[1]))
+  let y = 100
   doc.setFontSize(9)
-  Object.entries(breakdown).forEach(([key, val]) => {
+  sortedEntries.forEach(([key, val]) => {
     const label = key.replace(/_/g, ' ')
     doc.setTextColor(...GRAY)
     doc.text(label, 20, y)
     doc.setTextColor(...WHITE)
-    doc.text(`$${Number(val).toLocaleString()}`, 150, y)
+    doc.text(`$${Number(val).toLocaleString()}/mo`, 130, y)
+    doc.setTextColor(...GOLD)
+    doc.text(`$${(Number(val) * 12).toLocaleString()}/yr`, 165, y)
     const maxVal = Math.max(1, ...Object.values(breakdown).map(Number))
     doc.setFillColor(...GOLD)
-    doc.rect(20, y + 3, 120 * (Number(val) / maxVal), 4, 'F')
-    y += 14
+    doc.rect(20, y + 3, 100 * (Number(val) / maxVal), 3, 'F')
+    y += 13
   })
 
+  y += 8
+  doc.setDrawColor(...GOLD)
+  doc.setLineWidth(0.3)
+  doc.line(20, y, 190, y)
   y += 10
   doc.setTextColor(...WHITE)
   doc.setFontSize(11)
-  doc.text(`You are leaving $${(audit.revenue_leak_annual || 0).toLocaleString()} on the table every year.`, 20, y, { maxWidth: 170 })
+  doc.setFont('helvetica', 'bold')
+  doc.text('TOTAL ANNUAL REVENUE LEAK', 20, y)
   doc.setTextColor(...GOLD)
-  doc.text('This is recoverable.', 20, y + 10)
+  doc.setFontSize(16)
+  doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 150, y)
+  y += 12
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text('This is recoverable.', 20, y)
 }
 
 function solutionPage(doc, audit) {
@@ -308,10 +398,12 @@ export function buildAuditPdf(audit) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   coverPage(doc, audit)
   doc.addPage(); execSummaryPage(doc, audit)
+  doc.addPage(); categoryGridPage(doc, audit)
   doc.addPage(); websitePage(doc, audit)
   doc.addPage(); responsePage(doc, audit)
   doc.addPage(); competitorPage(doc, audit)
   doc.addPage(); revenuePage(doc, audit)
+  doc.addPage(); roadmapPage(doc, audit)
   doc.addPage(); solutionPage(doc, audit)
   return doc.output('datauristring').split(',')[1] // base64
 }

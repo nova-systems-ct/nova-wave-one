@@ -15,6 +15,10 @@ export async function scanWebsite(websiteUrl) {
   try {
     const mobileUrl = `${base}?url=${encodeURIComponent(websiteUrl)}&strategy=mobile${key ? `&key=${key}` : ''}`
     const r = await fetch(mobileUrl)
+    if (r.status === 403) {
+      console.error('[nova-audit:scanWebsite] PageSpeed Insights API not enabled on this key (403). Enable it at console.cloud.google.com -> APIs and Services -> Library -> search "PageSpeed Insights API" -> Enable.')
+      return { performance_score: null, mobile_score: null, desktop_score: null, has_website: true, error: 'PageSpeed Insights API not enabled on this key' }
+    }
     if (!r.ok) throw new Error(`PageSpeed ${r.status}`)
     const data = await r.json()
     const perf = data?.lighthouseResult?.categories?.performance?.score
@@ -75,6 +79,7 @@ export async function scanGoogleBusiness({ businessName, city }) {
     return {
       found: true,
       score: Math.min(100, score),
+      name: place.name || null,
       rating: place.rating ?? null,
       reviews: place.user_ratings_total ?? 0,
       address: place.formatted_address,
@@ -82,6 +87,7 @@ export async function scanGoogleBusiness({ businessName, city }) {
       opening_hours: details.opening_hours || null,
       website: details.website || null,
       phone: details.formatted_phone_number || null,
+      photo_count: details.photos?.length || 0,
     }
   } catch (err) {
     console.error('[nova-audit:scanGoogleBusiness] Error (continuing with google_score=50):', err.message)
@@ -89,23 +95,43 @@ export async function scanGoogleBusiness({ businessName, city }) {
   }
 }
 
-// Looks for platform links directly in the site's HTML — a real, ToS-compliant signal (no
-// scraping of the platforms themselves, just reading the client's own public homepage).
-export async function scanSocial(websiteUrl) {
-  if (!websiteUrl) return { score: 20, platforms: [], reason: 'No website to scan for social links' }
+// One fetch of the client's own public homepage, reused for social score (Category 5), brand
+// signals (Category 1), lead-capture signals (Category 6), and customer-experience signals
+// (Category 7) — all real, ToS-compliant signals read from the client's own page, no scraping
+// of third-party platforms.
+export async function scanWebsiteFeatures(websiteUrl) {
+  const empty = {
+    social: { score: 20, platforms: [] },
+    hasLogo: false, hasContactForm: false, hasBookingWidget: false,
+    hasLoyaltyMention: false, hasFAQ: false, hasTestimonials: false,
+    html: '',
+  }
+  if (!websiteUrl) return { ...empty, social: { score: 20, platforms: [], reason: 'No website to scan' } }
+
   try {
     const r = await fetch(websiteUrl, { signal: AbortSignal.timeout(8000) })
     if (!r.ok) throw new Error(`Fetch ${r.status}`)
     const html = await r.text()
+
     const platforms = []
     if (/instagram\.com/i.test(html)) platforms.push('instagram')
     if (/facebook\.com/i.test(html)) platforms.push('facebook')
     if (/tiktok\.com/i.test(html)) platforms.push('tiktok')
     if (/linkedin\.com/i.test(html)) platforms.push('linkedin')
-    return { score: Math.min(100, platforms.length * 20), platforms }
+
+    return {
+      social: { score: Math.min(100, platforms.length * 20), platforms },
+      hasLogo: /class=["'][^"']*logo[^"']*["']|alt=["'][^"']*logo[^"']*["']|id=["']logo["']/i.test(html),
+      hasContactForm: /<form[\s\S]*?(contact|inquiry|message)/i.test(html) || /<form/i.test(html),
+      hasBookingWidget: /book\s*(now|online|appointment)|schedule\s*(now|online|appointment)|calendly\.com|acuityscheduling\.com|square\.site\/appointments/i.test(html),
+      hasLoyaltyMention: /loyalty|rewards program|vip club|refer a friend|referral program/i.test(html),
+      hasFAQ: /frequently asked questions|\bfaq\b/i.test(html),
+      hasTestimonials: /testimonial|what our customers say|customer review/i.test(html),
+      html,
+    }
   } catch (err) {
-    console.error('[nova-audit:scanSocial] Error (continuing with social_score=20):', err.message)
-    return { score: 20, platforms: [], error: err.message }
+    console.error('[nova-audit:scanWebsiteFeatures] Error (continuing with defaults):', err.message)
+    return { ...empty, social: { score: 20, platforms: [], error: err.message } }
   }
 }
 

@@ -1,61 +1,47 @@
--- Nova Wave One — additional tables, run in the Nova Systems Supabase SQL Editor
+-- Nova Wave One — Supabase schema for Nova Audit and related tables.
 -- (same project as nova-systems.app: xizmgruvuazmummotzkp). This assumes
 -- nova_ai_agents, nova_ai_calls, nova_ai_knowledge_bases, nova_ai_voices, and
 -- nova_ai_settings already exist (created by nova-systems-copy's schema-update.sql).
 --
--- Safe to re-run any time — every statement is idempotent (IF NOT EXISTS everywhere).
--- If you already ran an earlier version of this file, re-run the whole thing now; the
--- ALTER TABLE block below adds any columns your existing nova_ai_audits table is missing.
+-- RUN THIS ENTIRE FILE IN THE SUPABASE SQL EDITOR BEFORE TESTING.
+-- Safe to run multiple times — every statement is idempotent (IF NOT EXISTS everywhere).
 
 CREATE TABLE IF NOT EXISTS nova_ai_audits (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  business_name TEXT,
-  website TEXT,
-  phone TEXT,
-  email TEXT,
-  owner_name TEXT,
-  city TEXT,
-  industry TEXT,
-  performance_score INTEGER,
-  google_score INTEGER,
-  phone_score INTEGER,
-  email_score INTEGER,
-  social_score INTEGER,
-  competitive_score INTEGER,
-  overall_score INTEGER,
-  score_label TEXT,
-  revenue_leak_monthly NUMERIC,
-  revenue_leak_annual NUMERIC,
-  revenue_leak_breakdown JSONB,
-  competitor_data JSONB,
-  key_findings TEXT[],
-  pdf_data TEXT,
-  pitch_deck_data TEXT,
-  phone_test_result JSONB,
-  email_test_result JSONB,
-  google_rating NUMERIC,
-  google_reviews INTEGER,
-  outreach_status TEXT DEFAULT 'pending',
-  consent BOOLEAN DEFAULT FALSE,
-  consent_date TIMESTAMPTZ,
-  consent_source TEXT,
-  email_sent_at TIMESTAMPTZ,
-  sms_sent_at TIMESTAMPTZ,
-  call_made_at TIMESTAMPTZ,
-  meeting_booked BOOLEAN DEFAULT FALSE,
-  became_client BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Backfill columns for a nova_ai_audits table that already existed before this line was added —
--- CREATE TABLE IF NOT EXISTS is a no-op against an existing table, so new columns never show up
--- without an explicit ALTER TABLE (this bit us once already: re-running this file after adding
--- phone_test_result/email_test_result/revenue_leak_breakdown silently didn't add them).
+-- Every column nova_ai_audits needs, explicit — CREATE TABLE IF NOT EXISTS is a no-op against
+-- a table that already exists, so a bare column list above is not enough to guarantee these
+-- exist on a database that had an earlier, partial version of this table. This bit us once
+-- already (phone_test_result/email_test_result/revenue_leak_breakdown silently never got added).
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS business_name TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS owner_name TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS city TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS industry TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS performance_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS google_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS phone_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS email_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS social_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS competitive_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS overall_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS score_label TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS revenue_leak_monthly NUMERIC;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS revenue_leak_annual NUMERIC;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS revenue_leak_breakdown JSONB;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS competitor_data JSONB;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS key_findings TEXT[];
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS pdf_data TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS pitch_deck_data TEXT;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS phone_test_result JSONB;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS email_test_result JSONB;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS google_rating NUMERIC;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS google_reviews INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS outreach_status TEXT DEFAULT 'pending';
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS consent BOOLEAN DEFAULT FALSE;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS consent_date TIMESTAMPTZ;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS consent_source TEXT;
@@ -64,6 +50,15 @@ ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS sms_sent_at TIMESTAMPTZ;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS call_made_at TIMESTAMPTZ;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS meeting_booked BOOLEAN DEFAULT FALSE;
 ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS became_client BOOLEAN DEFAULT FALSE;
+
+-- 10-category rebuild (Nova Intelligence Report) — new columns.
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS brand_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS storefront_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS lead_capture_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS customer_experience_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS ai_readiness_score INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS priority_roadmap JSONB;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS tier TEXT DEFAULT 'full';
 
 CREATE TABLE IF NOT EXISTS nova_audit_campaigns (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
