@@ -11,12 +11,13 @@ export const INDUSTRIES = [
   'Jewelry Store', 'Print and Graphics Shop', 'Other',
 ]
 
+// red <=40, orange 41-60, yellow 61-75, light green 76-85, gold 86-100
 export const SCORE_LABELS = [
-  { max: 40, label: 'Critical — Immediate Action Required', color: '#f87171' },
-  { max: 60, label: 'Poor — Significant Gaps Detected', color: '#fb923c' },
-  { max: 75, label: 'Fair — Room for Major Improvement', color: '#fbbf24' },
-  { max: 85, label: 'Good — Optimization Opportunities Exist', color: '#a3e635' },
-  { max: 101, label: 'Strong — Fine Tuning Needed', color: '#4ade80' },
+  { max: 41, label: 'Critical — Immediate Action Required', color: '#f87171' },
+  { max: 61, label: 'Poor — Significant Gaps Detected', color: '#fb923c' },
+  { max: 76, label: 'Fair — Room for Improvement', color: '#fbbf24' },
+  { max: 86, label: 'Good — Optimization Available', color: '#a3e635' },
+  { max: 101, label: 'Strong — Fine Tuning Needed', color: '#C8A96E' },
 ]
 
 export function scoreMeta(score) {

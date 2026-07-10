@@ -2,6 +2,10 @@
 -- (same project as nova-systems.app: xizmgruvuazmummotzkp). This assumes
 -- nova_ai_agents, nova_ai_calls, nova_ai_knowledge_bases, nova_ai_voices, and
 -- nova_ai_settings already exist (created by nova-systems-copy's schema-update.sql).
+--
+-- Safe to re-run any time — every statement is idempotent (IF NOT EXISTS everywhere).
+-- If you already ran an earlier version of this file, re-run the whole thing now; the
+-- ALTER TABLE block below adds any columns your existing nova_ai_audits table is missing.
 
 CREATE TABLE IF NOT EXISTS nova_ai_audits (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -42,6 +46,24 @@ CREATE TABLE IF NOT EXISTS nova_ai_audits (
   became_client BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Backfill columns for a nova_ai_audits table that already existed before this line was added —
+-- CREATE TABLE IF NOT EXISTS is a no-op against an existing table, so new columns never show up
+-- without an explicit ALTER TABLE (this bit us once already: re-running this file after adding
+-- phone_test_result/email_test_result/revenue_leak_breakdown silently didn't add them).
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS revenue_leak_breakdown JSONB;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS phone_test_result JSONB;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS email_test_result JSONB;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS google_rating NUMERIC;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS google_reviews INTEGER;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS consent BOOLEAN DEFAULT FALSE;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS consent_date TIMESTAMPTZ;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS consent_source TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS email_sent_at TIMESTAMPTZ;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS sms_sent_at TIMESTAMPTZ;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS call_made_at TIMESTAMPTZ;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS meeting_booked BOOLEAN DEFAULT FALSE;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS became_client BOOLEAN DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS nova_audit_campaigns (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

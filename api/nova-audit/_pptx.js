@@ -65,7 +65,8 @@ export async function buildPitchDeck(audit) {
     ['Metric', audit.business_name || 'You', ...competitors.map((c) => c.name || '')],
     ['Google Rating', String(audit.google_rating ?? '—'), ...competitors.map((c) => String(c.estimated_google_rating ?? '—'))],
     ['Reviews', String(audit.google_reviews ?? '—'), ...competitors.map((c) => String(c.review_count ?? '—'))],
-    ['Website Speed', String(audit.performance_score ?? '—'), ...competitors.map((c) => String(c.website_speed_estimate ?? '—'))],
+    ['Has Website', audit.website ? 'Yes' : 'No', ...competitors.map((c) => (c.has_website ? 'Yes' : 'No'))],
+    ['Online Booking', 'No', ...competitors.map((c) => (c.has_online_booking ? 'Yes' : 'No'))],
   ].map((row) => row.map((cell) => ({ text: cell, options: { color: WHITE, fontSize: 10 } })))
   s.addTable(tableRows, { x: 0.5, y: 1.2, w: 9, border: { color: '2A2A2A', pt: 1 }, fill: { color: '0E0E0E' } })
 

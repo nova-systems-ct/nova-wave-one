@@ -5,18 +5,28 @@ const BLACK = [8, 8, 8]
 const WHITE = [255, 255, 255]
 const GRAY = [153, 153, 153]
 const RED = [248, 113, 113]
+const ORANGE = [251, 146, 60]
+const YELLOW = [251, 191, 36]
+const LIGHT_GREEN = [163, 230, 53]
 const GREEN = [74, 222, 128]
 
+// red <40, orange 41-60, yellow 61-75, light green 76-85, gold 86-100 — matches the frontend's ScoreCircle
 function scoreColor(score) {
   if (score == null) return GRAY
-  if (score < 40) return RED
-  if (score < 70) return [251, 191, 36]
-  return GREEN
+  if (score <= 40) return RED
+  if (score <= 60) return ORANGE
+  if (score <= 75) return YELLOW
+  if (score <= 85) return LIGHT_GREEN
+  return GOLD
 }
 
 function coverPage(doc, audit) {
   doc.setFillColor(...BLACK)
   doc.rect(0, 0, 210, 297, 'F')
+  doc.setDrawColor(...GOLD)
+  doc.setLineWidth(0.3)
+  doc.line(20, 12, 190, 12)
+  doc.line(20, 285, 190, 285)
 
   doc.setFillColor(...GOLD)
   doc.roundedRect(20, 24, 12, 12, 2, 2, 'F')
@@ -41,10 +51,11 @@ function coverPage(doc, audit) {
   doc.text(`Prepared for ${audit.owner_name || audit.business_name}`, 20, 150)
   doc.text(new Date(audit.created_at || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), 20, 158)
 
-  doc.setDrawColor(...GOLD)
+  const circleColor = scoreColor(audit.overall_score)
+  doc.setDrawColor(...circleColor)
   doc.setLineWidth(0.8)
   doc.circle(150, 220, 24, 'S')
-  doc.setTextColor(...GOLD)
+  doc.setTextColor(...circleColor)
   doc.setFontSize(26)
   doc.setFont('helvetica', 'bold')
   doc.text(String(audit.overall_score ?? '—'), 150, 224, { align: 'center' })
@@ -63,6 +74,7 @@ function header(doc, title) {
   doc.setDrawColor(...GOLD)
   doc.setLineWidth(0.3)
   doc.line(20, 24, 190, 24)
+  doc.line(20, 285, 190, 285)
   doc.setTextColor(...GOLD)
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
@@ -202,7 +214,7 @@ function competitorPage(doc, audit) {
     ['Reviews', audit.google_reviews, (c) => c.review_count],
     ['Website', audit.website ? 'Yes' : 'No', (c) => (c.has_website ? 'Yes' : 'No')],
     ['Booking', 'No', (c) => (c.has_online_booking ? 'Yes' : 'No')],
-    ['Social', audit.social_score, (c) => c.social_media_score],
+    ['Social', audit.social_score, (c) => c.social_score],
   ]
   doc.setFontSize(9)
   metricRows.forEach(([label, mine, getC]) => {
@@ -223,7 +235,7 @@ function competitorPage(doc, audit) {
     doc.roundedRect(20, y, 170, 30, 2, 2, 'S')
     doc.setTextColor(...GOLD)
     doc.setFontSize(9)
-    const advantages = Array.isArray(competitors[0].advantages_over_client) ? competitors[0].advantages_over_client.join(', ') : String(competitors[0].advantages_over_client || 'stronger online presence')
+    const advantages = Array.isArray(competitors[0].advantages) ? competitors[0].advantages.join(', ') : String(competitors[0].advantages || 'stronger online presence')
     doc.text(doc.splitTextToSize(`${competitors[0].name} is ahead because of: ${advantages}`, 160), 25, y + 12)
   }
 }

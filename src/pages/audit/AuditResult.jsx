@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { ChevronDown, Download, Send, PlayCircle, CheckCircle2, Calendar } from 'lucide-react'
+import { ChevronDown, Download, Send, PlayCircle, CheckCircle2, Calendar, AlertTriangle } from 'lucide-react'
 import DashboardShell from '../../components/DashboardShell'
 import { AuditAPI } from '../../lib/api'
 import { scoreMeta } from '../../lib/constants'
@@ -65,12 +65,27 @@ export default function AuditResult() {
   }
   useEffect(load, [id])
 
+  const [resendResult, setResendResult] = useState('')
+
   const doAction = async (action, patch) => {
     setBusy(action)
     try {
       if (action === 'status') await AuditAPI.updateStatus({ id, ...patch })
       load()
     } catch {}
+    setBusy('')
+  }
+
+  const sendReport = async () => {
+    setBusy('resend')
+    setResendResult('')
+    try {
+      const result = await AuditAPI.resend(id)
+      setResendResult(result.smsOk || result.emailOk ? 'Report resent.' : 'No phone or email on file to resend to.')
+      load()
+    } catch (err) {
+      setResendResult(err.message || 'Failed to resend.')
+    }
     setBusy('')
   }
 
@@ -116,7 +131,10 @@ export default function AuditResult() {
         {Array.isArray(audit.key_findings) && audit.key_findings.length > 0 && (
           <div className="space-y-2">
             {audit.key_findings.map((f, i) => (
-              <p key={i} className="text-sm" style={{ color: '#ccc' }}>· {f}</p>
+              <div key={i} className="flex items-start gap-2.5 rounded-lg px-3 py-2.5" style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)' }}>
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#f87171' }} />
+                <p className="text-sm" style={{ color: '#ccc' }}>{f}</p>
+              </div>
             ))}
           </div>
         )}
@@ -129,10 +147,18 @@ export default function AuditResult() {
         <p>Rating: {audit.google_rating ?? 'N/A'} · Reviews: {audit.google_reviews ?? 'N/A'} · Profile score: {audit.google_score ?? 'N/A'}/100</p>
       </Accordion>
       <Accordion title="Phone Test Results">
-        <p>{audit.phone_test_result ? JSON.stringify(audit.phone_test_result) : 'No phone number provided for testing.'}</p>
+        {audit.phone_test_result?.tested ? (
+          <p>We placed a real test call to {audit.phone}. Status: <span style={{ color: '#fff' }}>{audit.phone_test_result.status || 'unknown'}</span>. Phone score: {audit.phone_score}/100.</p>
+        ) : (
+          <p>{audit.phone ? `Test call could not be placed (${audit.phone_test_result?.reason || audit.phone_test_result?.error || 'unknown error'}). Default score of ${audit.phone_score}/100 applied.` : 'No phone number provided for testing.'}</p>
+        )}
       </Accordion>
       <Accordion title="Email Test Results">
-        <p>{audit.email_test_result ? JSON.stringify(audit.email_test_result) : 'No email provided for testing.'}</p>
+        {audit.email_test_result?.tested ? (
+          <p>We sent a real test inquiry to {audit.email}. Status: <span style={{ color: '#fff' }}>{audit.email_test_result.status}</span>. Email score: {audit.email_score}/100 (reply-time scoring requires a follow-up check).</p>
+        ) : (
+          <p>{audit.email ? `Test email could not be sent (${audit.email_test_result?.reason || audit.email_test_result?.error || 'unknown error'}). Default score of ${audit.email_score}/100 applied.` : 'No email provided for testing.'}</p>
+        )}
       </Accordion>
       <Accordion title="Social Media Analysis">
         <p>Social presence score: {audit.social_score ?? 'N/A'}/100</p>
@@ -158,7 +184,7 @@ export default function AuditResult() {
                 ['Reviews', audit.google_reviews, (c) => c.review_count],
                 ['Has Website', audit.website ? 'Yes' : 'No', (c) => (c.has_website ? 'Yes' : 'No')],
                 ['Online Booking', 'No', (c) => (c.has_online_booking ? 'Yes' : 'No')],
-                ['Social Score', audit.social_score, (c) => c.social_media_score],
+                ['Social Score', audit.social_score, (c) => c.social_score],
                 ['Est. Monthly Traffic', '—', (c) => c.estimated_monthly_traffic],
               ].map(([label, mine, getC]) => (
                 <tr key={label} style={{ borderTop: '1px solid #2A2A2A' }}>
@@ -172,15 +198,16 @@ export default function AuditResult() {
         </div>
       )}
 
+      {resendResult && <p className="text-xs mb-4" style={{ color: GOLD }}>{resendResult}</p>}
       <div className="flex flex-wrap gap-3">
-        <button onClick={() => downloadBase64(audit.pdf_data, 'application/pdf', `${audit.business_name}-audit.pdf`)} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: GOLD, color: '#080808' }}>
+        <button onClick={() => downloadBase64(audit.pdf_data, 'application/pdf', `${audit.business_name}-nova-audit.pdf`)} disabled={!audit.pdf_data} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ background: GOLD, color: '#080808', opacity: audit.pdf_data ? 1 : 0.4 }}>
           <Download className="w-3.5 h-3.5" /> Download PDF
         </button>
         <button onClick={() => downloadBase64(audit.pitch_deck_data, 'application/vnd.openxmlformats-officedocument.presentationml.presentation', `${audit.business_name}-pitch.pptx`)} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: `1px solid ${GOLD}`, color: GOLD }}>
           <Download className="w-3.5 h-3.5" /> Download Pitch Deck
         </button>
-        <button onClick={() => doAction('status', { status: 'contacted' })} disabled={busy} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: '1px solid #2A2A2A', color: '#fff' }}>
-          <Send className="w-3.5 h-3.5" /> Send Report to Client
+        <button onClick={sendReport} disabled={busy} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: '1px solid #2A2A2A', color: '#fff' }}>
+          <Send className="w-3.5 h-3.5" /> {busy === 'resend' ? 'Sending…' : 'Send Report to Client'}
         </button>
         <button onClick={() => doAction('status', { status: 'sequence_started' })} disabled={busy} className="flex items-center gap-2 px-5 py-3 text-xs font-bold tracking-[0.1em] uppercase rounded-lg" style={{ border: '1px solid #2A2A2A', color: '#fff' }}>
           <PlayCircle className="w-3.5 h-3.5" /> Start Outreach Sequence

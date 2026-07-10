@@ -25,6 +25,7 @@ export const AuditAPI = {
   list: (params) => api.get('/api/nova-audit', { action: 'get_audits', ...params }),
   get: (id) => api.get('/api/nova-audit', { action: 'get_audit', id }),
   updateStatus: (payload) => api.post('/api/nova-audit?action=update_audit_status', payload),
+  resend: (id) => api.post('/api/nova-audit?action=resend', { id }),
   bulkScan: (payload) => api.post('/api/nova-audit?action=bulk_scan', payload),
   runBulk: (payload) => api.post('/api/nova-audit?action=run_bulk_audits', payload),
 }

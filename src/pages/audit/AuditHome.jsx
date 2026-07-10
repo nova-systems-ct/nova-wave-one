@@ -55,17 +55,28 @@ export default function AuditHome() {
     setRunning(true)
     setStepIndex(0)
 
-    const stepTimer = setInterval(() => {
-      setStepIndex((i) => Math.min(STEPS.length - 1, i + 1))
-    }, 900)
+    // The audit is a single real API call — these steps aren't separately awaited, they just
+    // advance at realistic intervals (8-12s each) while that one call is actually running, and
+    // stop advancing once they reach the last step rather than faking completion early.
+    let cancelled = false
+    const scheduleNextStep = (i) => {
+      if (cancelled || i >= STEPS.length - 1) return
+      const delay = 8000 + Math.random() * 4000
+      setTimeout(() => {
+        if (cancelled) return
+        setStepIndex(i + 1)
+        scheduleNextStep(i + 1)
+      }, delay)
+    }
+    scheduleNextStep(0)
 
     try {
       const result = await AuditAPI.run(form)
-      clearInterval(stepTimer)
+      cancelled = true
       setStepIndex(STEPS.length)
       setTimeout(() => navigate(`/dashboard/audit/result/${result.audit_id}`), 500)
     } catch (err) {
-      clearInterval(stepTimer)
+      cancelled = true
       setRunning(false)
       setError(err.message || 'Audit failed — please try again.')
     }
