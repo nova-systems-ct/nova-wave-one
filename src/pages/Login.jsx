@@ -78,6 +78,9 @@ export default function Login() {
           Access restricted to authorized Nova Systems personnel.<br />
           Contact <a href="mailto:hello@nova-systems.app" style={{ color: GOLD }}>hello@nova-systems.app</a> for access.
         </p>
+        <p className="text-center mt-3 text-[10px]" style={{ color: '#444444' }}>
+          Test login — isaac@nova-systems.app
+        </p>
       </div>
     </div>
   )
