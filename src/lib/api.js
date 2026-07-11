@@ -1,15 +1,19 @@
+import { supabase } from './supabase'
+
 // Thin fetch wrapper for this app's own /api routes.
-async function request(path, { method = 'GET', body, params } = {}) {
+async function request(path, { method = 'GET', body, params, authed = false } = {}) {
   let url = path
   if (params) {
     const qs = new URLSearchParams(params).toString()
     url += (path.includes('?') ? '&' : '?') + qs
   }
-  const res = await fetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  const headers = body ? { 'Content-Type': 'application/json' } : {}
+  if (authed) {
+    const { data } = supabase ? await supabase.auth.getSession() : { data: null }
+    const token = data?.session?.access_token
+    if (token) headers['Authorization'] = `Bearer ${token}`
+  }
+  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined })
   const data = await res.json().catch(() => null)
   if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`)
   return data
@@ -18,6 +22,13 @@ async function request(path, { method = 'GET', body, params } = {}) {
 export const api = {
   get: (path, params) => request(path, { method: 'GET', params }),
   post: (path, body) => request(path, { method: 'POST', body }),
+}
+
+// Settings touch live third-party credentials — every call carries the caller's Supabase
+// session token, and the backend rejects anything without a currently-valid one.
+export const AuthAPI = {
+  getSettings: () => request('/api/auth', { method: 'GET', params: { action: 'get_settings' }, authed: true }),
+  setSettings: (payload) => request('/api/auth?action=set_settings', { method: 'POST', body: payload, authed: true }),
 }
 
 export const AuditAPI = {
