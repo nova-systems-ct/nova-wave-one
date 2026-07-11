@@ -99,3 +99,53 @@ ALTER TABLE nova_ai_calls ADD COLUMN IF NOT EXISTS transcript TEXT;
 ALTER TABLE nova_ai_calls ADD COLUMN IF NOT EXISTS recording_url TEXT;
 ALTER TABLE nova_ai_calls ADD COLUMN IF NOT EXISTS outcome TEXT;
 ALTER TABLE nova_ai_calls ADD COLUMN IF NOT EXISTS duration INTEGER;
+
+-- ============================================================================================
+-- WAVE ONE — Nova Blue SMS/WhatsApp, Nova Email review flow, Nova Voice call correlation,
+-- Nova Social, Nova Revive, and cross-engine opt-out/lead-temperature tracking.
+-- Safe to run multiple times — every statement below is idempotent.
+-- ============================================================================================
+
+CREATE TABLE IF NOT EXISTS nova_ai_social_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  agent_id UUID,
+  platform TEXT,
+  event_type TEXT,
+  from_user TEXT,
+  message TEXT,
+  ai_reply TEXT,
+  post_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS nova_ai_revive_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  lead_id UUID,
+  channel TEXT,
+  message TEXT,
+  outcome TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Nova Blue SMS / WhatsApp — platform discriminator and Twilio message SID for dedupe/lookup.
+ALTER TABLE nova_ai_sms_logs ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'sms';
+ALTER TABLE nova_ai_sms_logs ADD COLUMN IF NOT EXISTS message_sid TEXT;
+
+-- Nova Voice — correlates a call record created at make_call/incoming-call time with the
+-- Twilio status callback (call_completed) and the Render stream server's final transcript.
+ALTER TABLE nova_ai_calls ADD COLUMN IF NOT EXISTS call_sid TEXT;
+
+-- Nova Email — review queue + confidence gating for AI-drafted replies.
+ALTER TABLE nova_ai_email_logs ADD COLUMN IF NOT EXISTS needs_review BOOLEAN DEFAULT FALSE;
+ALTER TABLE nova_ai_email_logs ADD COLUMN IF NOT EXISTS auto_send BOOLEAN DEFAULT FALSE;
+ALTER TABLE nova_ai_email_logs ADD COLUMN IF NOT EXISTS confidence_score NUMERIC;
+
+-- Nova Revive — lead lifecycle tracking on top of the existing outreach_status column.
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS opted_out BOOLEAN DEFAULT FALSE;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS lead_temperature TEXT;
+ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS days_since_contact INTEGER;
+
+-- Nova Social / Nova Voice — link an agent to its Meta account and Twilio number for webhook
+-- and incoming-call routing.
+ALTER TABLE nova_ai_agents ADD COLUMN IF NOT EXISTS meta_account_id TEXT;
+ALTER TABLE nova_ai_agents ADD COLUMN IF NOT EXISTS twilio_number_sid TEXT;

@@ -15,6 +15,8 @@ export default async function handler(req, res) {
   }
 
   const calledNumber = req.body?.To || ''
+  const callerNumber = req.body?.From || ''
+  const callSid = req.body?.CallSid || ''
   res.setHeader('Content-Type', 'text/xml')
 
   let agent = null
@@ -27,13 +29,29 @@ export default async function handler(req, res) {
     }
   }
 
+  // Log the inbound call up front so it shows up in Call Logs even if it never gets past
+  // this webhook (voicemail, no agent, stream server down) — call_completed fills in the
+  // final outcome/duration/recording once Twilio's status callback fires.
+  if (isSupabaseConfigured() && callSid) {
+    await supabaseFetch('nova_ai_calls', {
+      method: 'POST', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ agent_id: agent?.id || null, caller_phone: callerNumber, call_sid: callSid, direction: 'inbound', outcome: 'pending' }),
+    }).catch((err) => console.error('[nova-voice:incoming-call] Inbound call log failed (non-fatal):', err.message))
+  }
+
   if (!agent || agent.status === 'inactive') {
-    return res.status(200).send(twiml('<Say voice="Polly.Joanna">This number is not currently active. Please try again later.</Say>'))
+    return res.status(200).send(twiml(
+      '<Say voice="Polly.Joanna">Thank you for calling Nova Systems. Please leave a message after the tone and we will call you back within the hour.</Say>' +
+      '<Record maxLength="120" transcribe="false" />'
+    ))
   }
 
   const streamBase = process.env.RENDER_STREAM_URL || ''
   if (!streamBase) {
-    return res.status(200).send(twiml('<Say voice="Polly.Joanna">This system is still being configured. Please try again soon.</Say>'))
+    return res.status(200).send(twiml(
+      '<Say voice="Polly.Joanna">This system is still being configured. Please leave a message after the tone and we will call you back.</Say>' +
+      '<Record maxLength="120" transcribe="false" />'
+    ))
   }
 
   const streamUrl = `${streamBase.replace(/^http/, 'ws')}/stream?agent_id=${encodeURIComponent(agent.id)}`

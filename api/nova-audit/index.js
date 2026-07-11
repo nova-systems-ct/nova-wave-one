@@ -47,11 +47,25 @@ async function saveAuditRecord(auditRecord) {
   return null
 }
 
+// Logs which environment variables are present (never their values) at the start of every
+// audit, so a run that silently falls back to defaults is traceable in the Vercel function logs
+// instead of looking identical to a fully-configured run.
 function checkEnvAndWarn() {
-  if (!process.env.GOOGLE_API_KEY) console.warn('[nova-audit] GOOGLE_API_KEY is missing — website and Google Business scans will use defaults.')
-  if (!process.env.ANTHROPIC_API_KEY) console.warn('[nova-audit] ANTHROPIC_API_KEY is missing — competitor discovery will use fallback data.')
-  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) console.warn('[nova-audit] Twilio credentials are incomplete — phone test will be skipped.')
-  if (!process.env.RESEND_API_KEY) console.warn('[nova-audit] RESEND_API_KEY is missing — email test and delivery will be skipped.')
+  const checks = [
+    ['GOOGLE_API_KEY', process.env.GOOGLE_API_KEY, 'website and Google Business scans will use defaults'],
+    ['ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY, 'competitor discovery will use real Connecticut business name fallbacks'],
+    ['TWILIO_ACCOUNT_SID', process.env.TWILIO_ACCOUNT_SID, 'phone test will be skipped'],
+    ['TWILIO_AUTH_TOKEN', process.env.TWILIO_AUTH_TOKEN, 'phone test will be skipped'],
+    ['TWILIO_PHONE_NUMBER', process.env.TWILIO_PHONE_NUMBER, 'phone test will be skipped'],
+    ['RESEND_API_KEY', process.env.RESEND_API_KEY, 'email test and delivery will be skipped'],
+    ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY, 'audit will not be saved'],
+  ]
+  const present = checks.filter(([, val]) => !!val).map(([name]) => name)
+  const missing = checks.filter(([, val]) => !val)
+  console.log(`[nova-audit] Env check — present: [${present.join(', ') || 'none'}]`)
+  for (const [name, , consequence] of missing) {
+    console.warn(`[nova-audit] ${name} is missing — ${consequence}.`)
+  }
 }
 
 // Ties each under-70 category to the matching dollar figure from the revenue leak breakdown,
@@ -202,6 +216,10 @@ async function handleRunAudit(req, res) {
     email_test_result: tier === 'full' ? emailTest : null,
     google_rating, google_reviews,
     outreach_status: 'pending', created_at: new Date().toISOString(),
+    // Cross-engine trigger: every completed audit immediately enters the Nova Revive pipeline
+    // at temperature Hot (0 days since contact — the audit itself is the first contact), so
+    // Nova Revive's check_all_leads picks it up automatically without any separate insert.
+    opted_out: false, lead_temperature: 'Hot', days_since_contact: 0,
   }
 
   // PDF and pitch deck are a full-tier feature — the free tier is meant to be genuinely free to run.
@@ -280,6 +298,38 @@ async function handleUpdateStatus(req, res) {
   if (b.status) patch.outreach_status = sanitize(b.status, 30)
   if (typeof b.meeting_booked === 'boolean') patch.meeting_booked = b.meeting_booked
   if (typeof b.became_client === 'boolean') patch.became_client = b.became_client
+
+  // Cross-engine trigger: marking a lead as a client stops all future Nova Revive outreach
+  // (Revive's queries already filter on became_client=false) and sends a real welcome email.
+  if (patch.became_client === true) {
+    patch.outreach_status = 'client'
+    if (isSupabaseConfigured()) {
+      try {
+        const existing = await supabaseFetch(`nova_ai_audits?id=eq.${encodeURIComponent(id)}&limit=1`)
+        const lead = existing.ok ? (await existing.json())[0] : null
+        if (lead?.email && process.env.RESEND_API_KEY) {
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'Nova Systems <hello@nova-systems.app>',
+              to: [lead.email],
+              subject: `Welcome to Nova Systems, ${lead.business_name || 'friend'}!`,
+              html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#111;">
+                <div style="background:#080808;padding:24px;text-align:center;"><span style="color:#C8A96E;font-weight:900;letter-spacing:2px;">NOVA SYSTEMS</span></div>
+                <div style="padding:28px;border:1px solid #eee;border-top:none;">
+                  <h2>Welcome aboard, ${lead.owner_name || lead.business_name}!</h2>
+                  <p>We're excited to start working with ${lead.business_name} on recovering that $${(lead.revenue_leak_monthly || 0).toLocaleString()}/month in revenue leaks we found in your audit. Isaac will be in touch shortly with next steps.</p>
+                </div></div>`,
+            }),
+          })
+        }
+      } catch (err) {
+        console.error('[nova-audit:update_status] Welcome email failed (non-fatal):', err.message)
+      }
+    }
+  }
+
   const r = await supabaseFetch(`nova_ai_audits?id=eq.${encodeURIComponent(id)}`, {
     method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(patch),
   })

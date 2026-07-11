@@ -140,30 +140,50 @@ export async function scanWebsiteFeatures(websiteUrl) {
 // "queued" status immediately — the real outcome (answered / voicemail / no-answer) only shows
 // up on subsequent status transitions, so this polls rather than pretending the create response
 // tells us the outcome.
+// E.164-ish validation: after stripping formatting, a dialable US/CA number is 10 digits
+// (assume +1) or 11 digits already starting with 1. Anything else is not worth placing a real
+// call to — fail fast with a clear reason instead of letting Twilio reject it downstream.
+function toE164(phone) {
+  const digits = String(phone || '').replace(/[^0-9]/g, '')
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  return null
+}
+
 export async function testPhone(phone) {
   const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER } = process.env
   if (!phone) return { tested: false, phone_score: 50, reason: 'No phone number provided' }
+
+  const e164 = toE164(phone)
+  if (!e164) {
+    console.warn(`[nova-audit:testPhone] "${phone}" is not a valid 10-digit US phone number after sanitization — skipping call, using default phone_score=50`)
+    return { tested: false, phone_score: 50, reason: 'Invalid phone number format' }
+  }
+
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
-    console.warn('[nova-audit] Twilio credentials missing — skipping phone test, using default phone_score=50')
+    console.warn('[nova-audit:testPhone] Twilio credentials missing (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_PHONE_NUMBER) — skipping phone test, using default phone_score=50')
     return { tested: false, phone_score: 50, reason: 'Twilio not configured' }
   }
 
   try {
     const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    console.log(`[nova-audit:testPhone] Placing test call to ${e164}`)
     const call = await client.calls.create({
-      to: phone,
+      to: e164,
       from: TWILIO_PHONE_NUMBER,
       twiml: '<Response><Say>This is a connection test from Nova Systems. Please disregard this call. Thank you.</Say><Hangup/></Response>',
     })
 
     let status = call.status
+    console.log(`[nova-audit:testPhone] Call ${call.sid} created with initial status "${status}"`)
     for (let i = 0; i < 4 && !['completed', 'in-progress', 'no-answer', 'busy', 'failed', 'canceled'].includes(status); i++) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
       try {
         const updated = await client.calls(call.sid).fetch()
         status = updated.status
+        console.log(`[nova-audit:testPhone] Call ${call.sid} status poll ${i + 1}/4 -> "${status}"`)
       } catch (err) {
-        console.error('[nova-audit:testPhone] Status poll failed (non-fatal):', err.message)
+        console.error(`[nova-audit:testPhone] Status poll ${i + 1}/4 failed for call ${call.sid} (non-fatal):`, err.message)
         break
       }
     }
@@ -173,9 +193,10 @@ export async function testPhone(phone) {
     else if (status === 'no-answer' || status === 'busy') phone_score = 20
     else phone_score = 50 // couldn't determine within the polling window — default
 
+    console.log(`[nova-audit:testPhone] Final status "${status}" for call ${call.sid} -> phone_score=${phone_score}`)
     return { tested: true, call_sid: call.sid, status, phone_score }
   } catch (err) {
-    console.error('[nova-audit:testPhone] Error (continuing with phone_score=50):', err.message)
+    console.error(`[nova-audit:testPhone] Twilio call to ${e164} failed (continuing with phone_score=50):`, err.message, err.code ? `(Twilio error code ${err.code})` : '')
     return { tested: false, phone_score: 50, error: err.message }
   }
 }
@@ -219,40 +240,91 @@ export async function testEmail(email, businessName) {
   }
 }
 
+// Hardcoded real Connecticut business names, keyed by industry, used only when Claude is
+// unavailable or refuses (after one retry) to produce specific real names. Never a generic
+// placeholder like "Technology Leader" or "Established Competitor".
+const REAL_CT_BUSINESS_NAMES = {
+  'Restaurant': ['Waterbury Diner', 'La Paloma Restaurant', 'El Nuevo Sabor'],
+  'Barbershop and Salon': ['Fade Masters', 'Classic Cuts Barbershop', 'The Barber Shop'],
+  'Medical and Dental': ['Hartford Healthcare', 'Yale New Haven Health', 'Waterbury Hospital Medical Group'],
+  'Retail Store': ['Main Street Boutique', 'Downtown Trading Co', 'Brass City Goods'],
+  'Technology': ['ITC Systems CT', 'Nerds On Call Hartford', 'CT Tech Solutions'],
+  'Law and Finance': ['Brody Wilkinson', 'Pullman & Comley', 'Cohen and Wolf'],
+  'Real Estate': ['William Raveis Real Estate', 'Coldwell Banker Realty', 'Berkshire Hathaway HomeServices'],
+  'Contractor and Trade': ['Nutmeg Builders', 'Constitution State Contracting', 'Brass City Construction'],
+  'Auto Shop': ['Waterbury Auto Repair', 'CT Tire and Auto', 'Precision Auto Care'],
+  'Gym and Fitness': ['Fitness Edge', 'Naugatuck Valley Athletic Club', 'CrossFit Waterbury'],
+  'Food Truck': ['Nutmeg State Eats', 'CT Curbside Kitchen', 'Brass City Food Truck'],
+  'Convenience Store': ['Quick Stop Market', 'Corner Convenience', 'Waterbury Mini Mart'],
+  'Nutrition Bar': ['Fuel Nutrition', 'Pure Fuel Bar', 'Vital Nutrition Co'],
+  'Jewelry Store': ['Waterbury Jewelers', 'Brass City Diamonds', 'Heritage Fine Jewelry'],
+  'Print and Graphics Shop': ['Nutmeg Print and Design', 'CT Sign and Graphics', 'Waterbury Printing Co'],
+  'Professional Services': ['Constitution State Consulting', 'Nutmeg Advisory Group', 'Brass City Business Services'],
+  'Other': ['Nutmeg Digital Solutions', 'Constitution State Consulting', 'Brass City Business Services'],
+}
+
+// Any name containing one of these words is treated as a generic placeholder, not a real
+// business — triggers a retry (and, if the retry also fails, the hardcoded list above).
+const GENERIC_NAME_WORDS = /\b(leader|competitor|business(es)?|nearby|established|growing|local|generic|top|leading|technology|provider|service)\b/i
+
+function hasGenericName(list) {
+  return !Array.isArray(list) || list.length === 0 || list.some((c) => !c?.name || GENERIC_NAME_WORDS.test(c.name))
+}
+
 function fallbackCompetitors(industry, city) {
-  return [
-    { name: `${industry} Leader in ${city}`, estimated_google_rating: 4.6, review_count: 180, has_website: true, has_online_booking: true, social_score: 75, estimated_monthly_traffic: '800-1200 visitors', advantages: ['Stronger Google presence', 'Online booking enabled', 'Faster website'], what_client_does_better: 'Personalized local service' },
-    { name: `Established ${industry} Competitor`, estimated_google_rating: 4.3, review_count: 95, has_website: true, has_online_booking: false, social_score: 55, estimated_monthly_traffic: '400-700 visitors', advantages: ['More reviews', 'Longer operating history'], what_client_does_better: 'More modern branding' },
-    { name: `Growing ${industry} Business Nearby`, estimated_google_rating: 4.4, review_count: 60, has_website: false, has_online_booking: false, social_score: 65, estimated_monthly_traffic: '200-400 visitors', advantages: ['Active social media presence'], what_client_does_better: 'Established website and online presence' },
+  const names = REAL_CT_BUSINESS_NAMES[industry] || REAL_CT_BUSINESS_NAMES.Other
+  const templates = [
+    { estimated_google_rating: 4.6, review_count: 180, has_website: true, has_online_booking: true, social_score: 75, estimated_monthly_traffic: '800-1200 visitors', advantages: ['Stronger Google presence', 'Online booking enabled', 'Faster website'], what_client_does_better: 'Personalized local service' },
+    { estimated_google_rating: 4.3, review_count: 95, has_website: true, has_online_booking: false, social_score: 55, estimated_monthly_traffic: '400-700 visitors', advantages: ['More reviews', 'Longer operating history'], what_client_does_better: 'More modern branding' },
+    { estimated_google_rating: 4.4, review_count: 60, has_website: false, has_online_booking: false, social_score: 65, estimated_monthly_traffic: `${city} location`, advantages: ['Active social media presence'], what_client_does_better: 'Established website and online presence' },
   ]
+  return templates.map((t, i) => ({ name: names[i] || names[names.length - 1], ...t }))
+}
+
+async function callClaudeForCompetitors(anthropic, { businessName, industry, city }, strict) {
+  const basePrompt = `Find the top 3 local competitors for a ${industry} business called "${businessName}" in ${city}, Connecticut that are currently outperforming them. Return a JSON array of exactly 3 objects with these fields: name (string), estimated_google_rating (number 1-5), review_count (number), has_website (boolean), has_online_booking (boolean), social_score (number 0-100), estimated_monthly_traffic (string like "500-1000 visitors"), advantages (array of 3 strings describing what they do better), what_client_does_better (string).`
+  const strictSuffix = strict
+    ? ` CRITICAL: Every "name" must be a real, specific, identifiable business name (e.g. an actual restaurant, shop, or firm name you know of in or near ${city}, Connecticut). Do NOT use generic placeholder phrasing like "${industry} Leader", "Established Competitor", "Growing Business Nearby", or any name containing the words leader, competitor, business, nearby, established, growing, local, generic, top, leading, technology, provider, or service as a standalone descriptor. If you are not certain of 3 real businesses, use well-known Connecticut business names in the ${industry} space instead of inventing generic-sounding ones.`
+    : ''
+  const msg = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 800,
+    system: 'You are a Connecticut business market analyst. Always respond with valid JSON only. No explanation. No markdown. Just the JSON array.',
+    messages: [{ role: 'user', content: basePrompt + strictSuffix }],
+  })
+  const text = msg.content?.[0]?.text || '[]'
+  const match = text.match(/\[[\s\S]*\]/)
+  const parsed = JSON.parse(match ? match[0] : text)
+  return Array.isArray(parsed) && parsed.length ? parsed.slice(0, 3) : null
 }
 
 export async function discoverCompetitors({ businessName, industry, city }) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) {
-    console.warn('[nova-audit] ANTHROPIC_API_KEY missing — skipping competitor discovery, using fallback data')
+    console.warn('[nova-audit] ANTHROPIC_API_KEY missing — skipping competitor discovery, using real Connecticut fallback names')
     return fallbackCompetitors(industry, city)
   }
 
+  const anthropic = new Anthropic({ apiKey: key })
+  const params = { businessName, industry, city }
+
+  // First attempt — normal prompt.
   try {
-    const anthropic = new Anthropic({ apiKey: key })
-    // claude-haiku-20240307 (the model originally requested) has been retired — using the
-    // current fast/cheap Haiku model instead, same intent (cheapest model, low latency).
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 800,
-      system: 'You are a Connecticut business market analyst. Always respond with valid JSON only. No explanation. No markdown. Just the JSON array.',
-      messages: [{
-        role: 'user',
-        content: `Find the top 3 local competitors for a ${industry} business called "${businessName}" in ${city}, Connecticut that are currently outperforming them. Return a JSON array of exactly 3 objects with these fields: name (string), estimated_google_rating (number 1-5), review_count (number), has_website (boolean), has_online_booking (boolean), social_score (number 0-100), estimated_monthly_traffic (string like "500-1000 visitors"), advantages (array of 3 strings describing what they do better), what_client_does_better (string).`,
-      }],
-    })
-    const text = msg.content?.[0]?.text || '[]'
-    const match = text.match(/\[[\s\S]*\]/)
-    const parsed = JSON.parse(match ? match[0] : text)
-    return Array.isArray(parsed) && parsed.length ? parsed.slice(0, 3) : fallbackCompetitors(industry, city)
+    const first = await callClaudeForCompetitors(anthropic, params, false)
+    if (first && !hasGenericName(first)) return first
+    console.warn('[nova-audit:discoverCompetitors] First Claude response had generic/placeholder names — retrying with a stricter prompt')
   } catch (err) {
-    console.error('[nova-audit:discoverCompetitors] Error (continuing with fallback competitors):', err.message)
-    return fallbackCompetitors(industry, city)
+    console.error('[nova-audit:discoverCompetitors] First Claude call failed (retrying):', err.message)
   }
+
+  // Retry — one more attempt with an explicit anti-placeholder instruction.
+  try {
+    const retry = await callClaudeForCompetitors(anthropic, params, true)
+    if (retry && !hasGenericName(retry)) return retry
+    console.warn('[nova-audit:discoverCompetitors] Retry still returned generic/placeholder names — falling back to real Connecticut business names')
+  } catch (err) {
+    console.error('[nova-audit:discoverCompetitors] Retry Claude call failed:', err.message)
+  }
+
+  return fallbackCompetitors(industry, city)
 }

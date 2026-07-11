@@ -109,13 +109,28 @@ async function synthesizeSpeech(text, voiceId) {
   return buf.toString('base64')
 }
 
-async function logCall({ agentId, callerPhone, transcript, duration, outcome }) {
+// Both make_call (outbound) and incoming-call.js (inbound) already insert a "pending" row for
+// this call in nova_ai_calls, keyed by call_sid, before the media stream ever connects — so this
+// updates that existing row instead of inserting a duplicate. Falls back to inserting only if no
+// matching row is found (e.g. Twilio's <Start> event fired without the Vercel-side insert having
+// completed first, which can happen under load).
+async function logCall({ callSid, agentId, callerPhone, transcript, duration, outcome }) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
+  const headers = { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' }
   try {
+    if (callSid) {
+      const existing = await fetch(`${SUPABASE_URL}/rest/v1/nova_ai_calls?call_sid=eq.${encodeURIComponent(callSid)}&select=id`, { headers })
+      const rows = existing.ok ? await existing.json() : []
+      if (rows[0]) {
+        await fetch(`${SUPABASE_URL}/rest/v1/nova_ai_calls?id=eq.${rows[0].id}`, {
+          method: 'PATCH', headers, body: JSON.stringify({ transcript, duration, outcome }),
+        })
+        return
+      }
+    }
     await fetch(`${SUPABASE_URL}/rest/v1/nova_ai_calls`, {
-      method: 'POST',
-      headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-      body: JSON.stringify({ agent_id: agentId, caller_phone: callerPhone, transcript, duration, outcome, direction: 'inbound' }),
+      method: 'POST', headers,
+      body: JSON.stringify({ agent_id: agentId, caller_phone: callerPhone, call_sid: callSid || null, transcript, duration, outcome, direction: 'inbound' }),
     })
   } catch (err) {
     console.error('[logCall] Error:', err.message)
@@ -131,6 +146,7 @@ wss.on('connection', async (twilioWs, req) => {
   console.log('[stream] Connection opened for agent', agentId)
 
   let streamSid = null
+  let callSid = null
   let callerPhone = null
   let agent = null, kb = null, systemPrompt = ''
   const history = []
@@ -153,7 +169,7 @@ wss.on('connection', async (twilioWs, req) => {
   if (DEEPGRAM_API_KEY) {
     const deepgram = createDeepgramClient(DEEPGRAM_API_KEY)
     deepgramSocket = deepgram.listen.live({
-      encoding: 'mulaw', sample_rate: 8000, channels: 1, punctuate: true, interim_results: true, model: 'nova-2',
+      encoding: 'mulaw', sample_rate: 8000, channels: 1, punctuate: true, smart_format: true, interim_results: true, model: 'nova-2', language: 'en-US',
     })
 
     deepgramSocket.on('transcript', async (msg) => {
@@ -191,18 +207,21 @@ wss.on('connection', async (twilioWs, req) => {
     deepgramSocket.on('error', (err) => console.error('[stream] Deepgram error:', err))
   }
 
+  let loggedFinal = false
   twilioWs.on('message', (raw) => {
     let msg
     try { msg = JSON.parse(raw.toString()) } catch { return }
 
     if (msg.event === 'start') {
       streamSid = msg.start?.streamSid
+      callSid = msg.start?.callSid || null
       callerPhone = msg.start?.customParameters?.caller_phone || null
     } else if (msg.event === 'media' && deepgramSocket) {
       deepgramSocket.send(Buffer.from(msg.media.payload, 'base64'))
     } else if (msg.event === 'stop') {
       const duration = Math.round((Date.now() - startTime) / 1000)
-      logCall({ agentId, callerPhone, transcript: transcriptLog.join('\n'), duration, outcome: 'hangup' })
+      loggedFinal = true
+      logCall({ callSid, agentId, callerPhone, transcript: transcriptLog.join('\n'), duration, outcome: 'completed' })
       deepgramSocket?.finish()
     }
   })
@@ -210,6 +229,12 @@ wss.on('connection', async (twilioWs, req) => {
   twilioWs.on('close', () => {
     console.log('[stream] Connection closed for agent', agentId)
     deepgramSocket?.finish()
+    // Twilio's 'stop' event doesn't always arrive before the socket closes (e.g. abrupt hangup)
+    // — finalize the call record here too so it never gets stuck at outcome "pending".
+    if (!loggedFinal) {
+      const duration = Math.round((Date.now() - startTime) / 1000)
+      logCall({ callSid, agentId, callerPhone, transcript: transcriptLog.join('\n'), duration, outcome: 'completed' })
+    }
   })
 })
 

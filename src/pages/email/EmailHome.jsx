@@ -16,10 +16,17 @@ const STATUS_LABEL = {
 export default function EmailHome() {
   const navigate = useNavigate()
   const [emails, setEmails] = useState([])
+  const [sentEmails, setSentEmails] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    EmailAPI.list({ limit: 20 }).then((data) => setEmails(Array.isArray(data) ? data : [])).catch(() => setEmails([])).finally(() => setLoading(false))
+    Promise.all([
+      EmailAPI.list({ limit: 20 }),
+      EmailAPI.list({ direction: 'outbound', sent: 'true', limit: 8 }),
+    ]).then(([inbox, sent]) => {
+      setEmails(Array.isArray(inbox) ? inbox : [])
+      setSentEmails(Array.isArray(sent) ? sent : [])
+    }).catch(() => { setEmails([]); setSentEmails([]) }).finally(() => setLoading(false))
   }, [])
 
   return (
@@ -60,9 +67,25 @@ export default function EmailHome() {
               <Plus className="w-3 h-3" /> New Campaign
             </button>
           </div>
-          <div className="text-center py-10">
-            <p className="text-sm" style={{ color: '#666666' }}>No active campaigns yet. Build one from the Audit pipeline.</p>
-          </div>
+          {loading ? (
+            <p className="text-sm" style={{ color: '#666666' }}>Loading…</p>
+          ) : sentEmails.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-sm" style={{ color: '#666666' }}>No campaign sends yet. Build one from the Audit pipeline.</p>
+            </div>
+          ) : (
+            <div className="space-y-0">
+              {sentEmails.map((e, i) => (
+                <div key={e.id} className="py-3 flex items-center gap-3" style={{ borderBottom: i < sentEmails.length - 1 ? '1px solid #2A2A2A' : 'none' }}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate" style={{ color: '#fff' }}>{e.to_email}</p>
+                    <p className="text-xs truncate" style={{ color: '#666666' }}>{e.subject}</p>
+                  </div>
+                  <span className="text-[10px] flex-shrink-0" style={{ color: '#666666' }}>{new Date(e.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </DashboardShell>

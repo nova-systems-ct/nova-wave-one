@@ -11,10 +11,8 @@ import AuditResult from './pages/audit/AuditResult'
 import AuditReports from './pages/audit/AuditReports'
 
 import VoiceHome from './pages/voice/VoiceHome'
-import VoiceLogs from './pages/voice/VoiceLogs'
 
 import SMSHome from './pages/sms/SMSHome'
-import SMSConversations from './pages/sms/SMSConversations'
 
 import WhatsAppHome from './pages/whatsapp/WhatsAppHome'
 
@@ -23,10 +21,8 @@ import EmailInbox from './pages/email/EmailInbox'
 import EmailCampaigns from './pages/email/EmailCampaigns'
 
 import SocialHome from './pages/social/SocialHome'
-import SocialInbox from './pages/social/SocialInbox'
 
 import ReviveHome from './pages/revive/ReviveHome'
-import ReviveCampaigns from './pages/revive/ReviveCampaigns'
 
 import UnifiedInbox from './pages/inbox/UnifiedInbox'
 
@@ -56,25 +52,21 @@ function App() {
         <Route path="/dashboard/audit/result/:id" element={<ErrorBoundary><AuditResult /></ErrorBoundary>} />
         <Route path="/dashboard/audit/reports" element={<ErrorBoundary><AuditReports /></ErrorBoundary>} />
 
-        <Route path="/dashboard/voice" element={<VoiceHome />} />
-        <Route path="/dashboard/voice/logs" element={<VoiceLogs />} />
+        <Route path="/dashboard/voice" element={<ErrorBoundary><VoiceHome /></ErrorBoundary>} />
 
-        <Route path="/dashboard/sms" element={<SMSHome />} />
-        <Route path="/dashboard/sms/conversations" element={<SMSConversations />} />
+        <Route path="/dashboard/sms" element={<ErrorBoundary><SMSHome /></ErrorBoundary>} />
 
-        <Route path="/dashboard/whatsapp" element={<WhatsAppHome />} />
+        <Route path="/dashboard/whatsapp" element={<ErrorBoundary><WhatsAppHome /></ErrorBoundary>} />
 
         <Route path="/dashboard/email" element={<EmailHome />} />
         <Route path="/dashboard/email/inbox" element={<EmailInbox />} />
         <Route path="/dashboard/email/campaigns" element={<EmailCampaigns />} />
 
-        <Route path="/dashboard/social" element={<SocialHome />} />
-        <Route path="/dashboard/social/inbox" element={<SocialInbox />} />
+        <Route path="/dashboard/social" element={<ErrorBoundary><SocialHome /></ErrorBoundary>} />
 
-        <Route path="/dashboard/revive" element={<ReviveHome />} />
-        <Route path="/dashboard/revive/campaigns" element={<ReviveCampaigns />} />
+        <Route path="/dashboard/revive" element={<ErrorBoundary><ReviveHome /></ErrorBoundary>} />
 
-        <Route path="/dashboard/inbox" element={<UnifiedInbox />} />
+        <Route path="/dashboard/inbox" element={<ErrorBoundary><UnifiedInbox /></ErrorBoundary>} />
 
         <Route path="/dashboard/agents" element={<AgentList />} />
         <Route path="/dashboard/agents/create" element={<AgentCreate />} />

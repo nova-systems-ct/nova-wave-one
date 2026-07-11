@@ -5,6 +5,10 @@
       "maxDuration": 60
     }
   },
+  "crons": [
+    { "path": "/api/nova-revive?action=weekly_report", "schedule": "0 9 * * 1" },
+    { "path": "/api/nova-revive?action=check_all_leads", "schedule": "0 0 * * *" }
+  ],
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist"

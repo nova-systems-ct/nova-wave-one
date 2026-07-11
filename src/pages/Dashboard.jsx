@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { Bot, Phone, MessageSquare, Mail, Target, CalendarCheck, Search, Send, Plus, Inbox, RefreshCcw, FileDown } from 'lucide-react'
+import { Bot, Phone, MessageSquare, Mail, Target, DollarSign, Share2, Search, RefreshCcw, Send, Plus, Inbox, FileDown } from 'lucide-react'
 import DashboardShell from '../components/DashboardShell'
 import StatCard from '../components/StatCard'
 import { supabase } from '../lib/supabase'
 
 const GOLD = '#C8A96E'
 
-const CHANNEL_ICON = { call: Phone, sms: MessageSquare, email: Mail }
-const CHANNEL_COLOR = { call: '#a78bfa', sms: '#60a5fa', email: '#2dd4bf' }
+const CHANNEL_ICON = { call: Phone, sms: MessageSquare, whatsapp: MessageSquare, email: Mail, social: Share2, revive: RefreshCcw }
+const CHANNEL_COLOR = { call: '#a78bfa', sms: '#60a5fa', whatsapp: '#25D366', email: '#2dd4bf', social: GOLD, revive: '#f59e0b' }
 
 const QUICK_ACTIONS = [
   { label: 'Run New Audit', icon: Search, to: '/dashboard/audit' },
@@ -33,7 +33,10 @@ function last30Days() {
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const [stats, setStats] = useState({ agents: 0, callsToday: 0, smsToday: 0, emailsToday: 0, leads: 0, meetingsToday: 0 })
+  const [stats, setStats] = useState({
+    agents: 0, callsToday: 0, smsToday: 0, emailsToday: 0, socialToday: 0, auditsToday: 0,
+    leadsRevivedToday: 0, meetingsBooked: 0, pipelineValue: 0,
+  })
   const [activity, setActivity] = useState([])
   const [chartData, setChartData] = useState([])
   const [loading, setLoading] = useState(true)
@@ -44,12 +47,16 @@ export default function Dashboard() {
       const today = new Date(); today.setHours(0, 0, 0, 0)
 
       try {
-        const [agentsRes, callsRes, smsRes, emailRes, auditsRes] = await Promise.all([
+        const [agentsRes, callsRes, smsRes, emailRes, socialRes, auditsTodayRes, reviveTodayRes, meetingsRes, pipelineRes] = await Promise.all([
           supabase.from('nova_ai_agents').select('id', { count: 'exact', head: true }),
           supabase.from('nova_ai_calls').select('id,created_at').gte('created_at', today.toISOString()),
           supabase.from('nova_ai_sms_logs').select('id,created_at').gte('created_at', today.toISOString()),
           supabase.from('nova_ai_email_logs').select('id,created_at').gte('created_at', today.toISOString()),
-          supabase.from('nova_ai_audits').select('id', { count: 'exact', head: true }),
+          supabase.from('nova_ai_social_logs').select('id,created_at').gte('created_at', today.toISOString()),
+          supabase.from('nova_ai_audits').select('id', { count: 'exact', head: true }).gte('created_at', today.toISOString()),
+          supabase.from('nova_ai_revive_logs').select('id', { count: 'exact', head: true }).gte('created_at', today.toISOString()),
+          supabase.from('nova_ai_audits').select('id', { count: 'exact', head: true }).eq('meeting_booked', true),
+          supabase.from('nova_ai_audits').select('revenue_leak_monthly').eq('became_client', false),
         ])
 
         setStats({
@@ -57,21 +64,28 @@ export default function Dashboard() {
           callsToday: callsRes.data?.length || 0,
           smsToday: smsRes.data?.length || 0,
           emailsToday: emailRes.data?.length || 0,
-          leads: auditsRes.count || 0,
-          meetingsToday: 0,
+          socialToday: socialRes.data?.length || 0,
+          auditsToday: auditsTodayRes.count || 0,
+          leadsRevivedToday: reviveTodayRes.count || 0,
+          meetingsBooked: meetingsRes.count || 0,
+          pipelineValue: (pipelineRes.data || []).reduce((sum, r) => sum + (Number(r.revenue_leak_monthly) || 0), 0),
         })
 
-        const [recentCalls, recentSms, recentEmails] = await Promise.all([
-          supabase.from('nova_ai_calls').select('id,caller_phone,outcome,created_at').order('created_at', { ascending: false }).limit(8),
-          supabase.from('nova_ai_sms_logs').select('id,contact_phone,direction,created_at').order('created_at', { ascending: false }).limit(8),
-          supabase.from('nova_ai_email_logs').select('id,from_email,category,created_at').order('created_at', { ascending: false }).limit(8),
+        const [recentCalls, recentSms, recentEmails, recentSocial, recentRevive] = await Promise.all([
+          supabase.from('nova_ai_calls').select('id,caller_phone,outcome,created_at').order('created_at', { ascending: false }).limit(6),
+          supabase.from('nova_ai_sms_logs').select('id,contact_phone,direction,platform,created_at').order('created_at', { ascending: false }).limit(6),
+          supabase.from('nova_ai_email_logs').select('id,from_email,category,created_at').order('created_at', { ascending: false }).limit(6),
+          supabase.from('nova_ai_social_logs').select('id,platform,from_user,event_type,created_at').order('created_at', { ascending: false }).limit(6),
+          supabase.from('nova_ai_revive_logs').select('id,channel,outcome,created_at').order('created_at', { ascending: false }).limit(6),
         ])
 
         const merged = [
           ...(recentCalls.data || []).map((c) => ({ id: `call-${c.id}`, type: 'call', text: `Call ${c.outcome || 'logged'} — ${c.caller_phone || 'unknown'}`, ts: c.created_at })),
-          ...(recentSms.data || []).map((s) => ({ id: `sms-${s.id}`, type: 'sms', text: `${s.direction === 'inbound' ? 'Inbound' : 'Outbound'} text — ${s.contact_phone || 'unknown'}`, ts: s.created_at })),
+          ...(recentSms.data || []).map((s) => ({ id: `sms-${s.id}`, type: s.platform === 'whatsapp' ? 'whatsapp' : 'sms', text: `${s.direction === 'inbound' ? 'Inbound' : 'Outbound'} ${s.platform === 'whatsapp' ? 'WhatsApp' : 'text'} — ${s.contact_phone || 'unknown'}`, ts: s.created_at })),
           ...(recentEmails.data || []).map((e) => ({ id: `email-${e.id}`, type: 'email', text: `Email ${e.category || 'logged'} — ${e.from_email || 'unknown'}`, ts: e.created_at })),
-        ].sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, 10)
+          ...(recentSocial.data || []).map((s) => ({ id: `social-${s.id}`, type: 'social', text: `${s.platform || 'Social'} ${s.event_type || 'reply'} — ${s.from_user || 'unknown'}`, ts: s.created_at })),
+          ...(recentRevive.data || []).map((r) => ({ id: `revive-${r.id}`, type: 'revive', text: `Revive ${r.channel || ''} — ${r.outcome || 'sent'}`, ts: r.created_at })),
+        ].sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, 12)
 
         setActivity(merged)
 
@@ -86,7 +100,7 @@ export default function Dashboard() {
           const inRange = (rows) => (rows || []).filter((r) => { const t = new Date(r.created_at); return t >= d && t < next }).length
           return {
             date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            calls: inRange(callsRange.data), sms: inRange(smsRange.data), emails: inRange(emailRange.data), meetings: 0,
+            calls: inRange(callsRange.data), sms: inRange(smsRange.data), emails: inRange(emailRange.data),
           }
         }))
       } catch (err) {
@@ -99,13 +113,19 @@ export default function Dashboard() {
 
   return (
     <DashboardShell title="Dashboard">
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
-        <StatCard icon={Bot} label="Active Agents" value={loading ? '—' : stats.agents} />
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-4">
         <StatCard icon={Phone} label="Calls Today" value={loading ? '—' : stats.callsToday} />
         <StatCard icon={MessageSquare} label="SMS Sent Today" value={loading ? '—' : stats.smsToday} />
-        <StatCard icon={Mail} label="Emails Handled" value={loading ? '—' : stats.emailsToday} />
-        <StatCard icon={Target} label="Leads in Pipeline" value={loading ? '—' : stats.leads} />
-        <StatCard icon={CalendarCheck} label="Meetings Today" value={loading ? '—' : stats.meetingsToday} />
+        <StatCard icon={Mail} label="Emails Today" value={loading ? '—' : stats.emailsToday} />
+        <StatCard icon={Share2} label="Social Replies Today" value={loading ? '—' : stats.socialToday} />
+        <StatCard icon={Search} label="Audits Today" value={loading ? '—' : stats.auditsToday} />
+        <StatCard icon={RefreshCcw} label="Leads Revived Today" value={loading ? '—' : stats.leadsRevivedToday} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+        <StatCard icon={DollarSign} label="Pipeline Value / mo" value={loading ? '—' : `$${stats.pipelineValue.toLocaleString()}`} />
+        <StatCard icon={Bot} label="Active Agents" value={loading ? '—' : stats.agents} />
+        <StatCard icon={Target} label="Meetings Booked" value={loading ? '—' : stats.meetingsBooked} />
       </div>
 
       <div className="grid xl:grid-cols-5 gap-4 mb-6">
@@ -162,7 +182,6 @@ export default function Dashboard() {
             <Line type="monotone" dataKey="calls" name="Calls" stroke="#a78bfa" strokeWidth={2} dot={false} />
             <Line type="monotone" dataKey="sms" name="SMS" stroke="#60a5fa" strokeWidth={2} dot={false} />
             <Line type="monotone" dataKey="emails" name="Emails" stroke="#2dd4bf" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="meetings" name="Meetings" stroke={GOLD} strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
