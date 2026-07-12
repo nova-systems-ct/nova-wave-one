@@ -176,6 +176,106 @@ async function handleSetupStatus(req, res) {
   })
 }
 
+// ============================================================ ACTION: schedule_post ========
+// Nova Media creates content; Nova Social only schedules and publishes it.
+
+async function handleSchedulePost(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  const b = req.body || {}
+  const platform = sanitize(b.platform, 40)
+  const content = sanitize(b.content, 4000)
+  const scheduled_at = b.scheduled_at
+  if (!platform || !content || !scheduled_at) return res.status(400).json({ error: 'platform, content, and scheduled_at are required' })
+  if (!isSupabaseConfigured()) return res.status(500).json({ error: 'Supabase not configured' })
+
+  const r = await supabaseFetch('nova_social_posts', {
+    method: 'POST', headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({ platform, content, media_url: sanitize(b.media_url, 1000) || null, scheduled_at, status: 'scheduled' }),
+  })
+  if (!r.ok) return res.status(500).json({ error: 'Failed to schedule post' })
+  return res.status(200).json({ ok: true, post: (await r.json())[0] })
+}
+
+// ============================================================ ACTION: get_scheduled ========
+
+async function handleGetScheduled(req, res) {
+  if (!isSupabaseConfigured()) return res.status(200).json([])
+  const r = await supabaseFetch('nova_social_posts?order=scheduled_at.asc&limit=200')
+  return res.status(200).json(r.ok ? await r.json() : [])
+}
+
+// ============================================================ ACTION: publish_post =========
+// Publishes one post immediately via the Meta Graph API (Instagram/Facebook). LinkedIn and
+// TikTok publishing require their own OAuth app review — not wired yet; those posts are left
+// scheduled with a note so nothing silently fails.
+
+async function publishOnePost(post) {
+  const token = process.env.META_ACCESS_TOKEN
+  if (post.platform === 'instagram' || post.platform === 'facebook') {
+    if (!token) return { ok: false, error: 'META_ACCESS_TOKEN not configured' }
+    try {
+      const r = await fetch(`${GRAPH_API}/me/feed`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: post.content, ...(post.media_url ? { link: post.media_url } : {}) }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) return { ok: false, error: data?.error?.message || `Graph API ${r.status}` }
+      return { ok: true, external_id: data.id }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  }
+  return { ok: false, error: `${post.platform} publishing requires manual upload — not yet automated` }
+}
+
+async function handlePublishPost(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  const b = req.body || {}
+  const id = sanitize(b.id, 100)
+  if (!id || !isSupabaseConfigured()) return res.status(400).json({ error: 'id is required' })
+  const r = await supabaseFetch(`nova_social_posts?id=eq.${encodeURIComponent(id)}&limit=1`)
+  const post = r.ok ? (await r.json())[0] : null
+  if (!post) return res.status(404).json({ error: 'Post not found' })
+
+  const result = await publishOnePost(post)
+  await supabaseFetch(`nova_social_posts?id=eq.${id}`, {
+    method: 'PATCH', headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify(result.ok ? { status: 'published', published_at: new Date().toISOString() } : { status: 'failed' }),
+  }).catch(() => {})
+  if (!result.ok) await reportEngineError('Nova Social', 'publish_post', post.platform, new Error(result.error))
+  return res.status(result.ok ? 200 : 500).json({ ok: result.ok, error: result.error });
+}
+
+// Cron entry point — checks for posts due in the next 15 minutes and publishes each one.
+async function handlePublishDuePosts(req, res) {
+  if (!isSupabaseConfigured()) return res.status(200).json({ published: 0 })
+  const cutoff = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+  const r = await supabaseFetch(`nova_social_posts?status=eq.scheduled&scheduled_at=lte.${cutoff}&limit=50`)
+  const due = r.ok ? await r.json() : []
+  let published = 0
+  for (const post of due) {
+    const result = await publishOnePost(post)
+    await supabaseFetch(`nova_social_posts?id=eq.${post.id}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify(result.ok ? { status: 'published', published_at: new Date().toISOString() } : { status: 'failed' }),
+    }).catch(() => {})
+    if (result.ok) published++
+  }
+  return res.status(200).json({ ok: true, checked: due.length, published })
+}
+
+// ============================================================ ACTION: get_analytics ========
+// Real per-post engagement requires the post's Meta external_id and additional Graph API scopes
+// not yet requested during app review — this returns whatever engagement JSON has been recorded
+// (populated by a future webhook/poll) rather than fabricating numbers.
+
+async function handleGetAnalytics(req, res) {
+  if (!isSupabaseConfigured()) return res.status(200).json([])
+  const r = await supabaseFetch('nova_social_posts?status=eq.published&order=published_at.desc&limit=50')
+  return res.status(200).json(r.ok ? await r.json() : [])
+}
+
 // ============================================================ ACTION: get_social_logs ======
 
 async function handleGetSocialLogs(req, res) {
@@ -210,6 +310,11 @@ export default async function handler(req, res) {
       case 'receive_facebook_webhook':  return await handleReceiveWebhook(req, res)
       case 'get_social_logs':         return await handleGetSocialLogs(req, res)
       case 'setup_status':            return await handleSetupStatus(req, res)
+      case 'schedule_post':           return await handleSchedulePost(req, res)
+      case 'get_scheduled':           return await handleGetScheduled(req, res)
+      case 'publish_post':            return await handlePublishPost(req, res)
+      case 'publish_due_posts':       return await handlePublishDuePosts(req, res)
+      case 'get_analytics':           return await handleGetAnalytics(req, res)
       default:
         if (req.method === 'GET' && !action) return await handleGetSocialLogs(req, res)
         return res.status(400).json({ error: `Unknown action: ${action}` })

@@ -1,23 +1,27 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { Bot, Phone, MessageSquare, Mail, Target, DollarSign, Share2, Search, RefreshCcw, Send, Plus, Inbox, FileDown } from 'lucide-react'
+import {
+  Bot, Phone, MessageSquare, Mail, Target, DollarSign, Share2, Search, RefreshCcw,
+  Send, Plus, Inbox, FileDown, PhoneCall, CalendarClock, ArrowUpRight,
+} from 'lucide-react'
 import DashboardShell from '../components/DashboardShell'
 import StatCard from '../components/StatCard'
 import { supabase } from '../lib/supabase'
+import { InsightsAPI } from '../lib/api'
 
 const GOLD = '#C8A96E'
 
-const CHANNEL_ICON = { call: Phone, sms: MessageSquare, whatsapp: MessageSquare, email: Mail, social: Share2, revive: RefreshCcw }
-const CHANNEL_COLOR = { call: '#a78bfa', sms: '#60a5fa', whatsapp: '#25D366', email: '#2dd4bf', social: GOLD, revive: '#f59e0b' }
+const CHANNEL_ICON = { call: Phone, sms: MessageSquare, whatsapp: MessageSquare, email: Mail, social: Share2, revive: RefreshCcw, book: CalendarClock, crm: Target }
+const CHANNEL_COLOR = { call: '#a78bfa', sms: '#60a5fa', whatsapp: '#25D366', email: '#2dd4bf', social: GOLD, revive: '#f59e0b', book: '#4ade80', crm: '#f87171' }
 
 const QUICK_ACTIONS = [
-  { label: 'Run New Audit', icon: Search, to: '/dashboard/audit' },
+  { label: 'Run Audit', icon: Search, to: '/dashboard/audit' },
+  { label: 'Check Revive', icon: RefreshCcw, to: '/dashboard/revive' },
   { label: 'Send Campaign', icon: Send, to: '/dashboard/email/campaigns' },
-  { label: 'Create Agent', icon: Plus, to: '/dashboard/agents' },
+  { label: 'Make Call', icon: PhoneCall, to: '/dashboard/voice' },
   { label: 'View Inbox', icon: Inbox, to: '/dashboard/inbox' },
-  { label: 'Check Cold Leads', icon: RefreshCcw, to: '/dashboard/revive' },
-  { label: 'Download Report', icon: FileDown, to: '/dashboard/audit/reports' },
+  { label: 'Generate Report', icon: FileDown, to: '/dashboard/insights' },
 ]
 
 function last30Days() {
@@ -31,14 +35,37 @@ function last30Days() {
   return days
 }
 
+function buildRecommendations(stats, alerts) {
+  const recs = []
+  if (alerts?.length) {
+    const top = alerts[0]
+    recs.push({
+      priority: 'high', action: `Follow up with ${top.contact?.business_name || 'a lead'}`,
+      reasoning: top.reason, to: `/dashboard/crm/contact/${top.contact?.id}`,
+    })
+  }
+  if (stats.leadsToday === 0) {
+    recs.push({ priority: 'medium', action: 'Run a bulk audit scan to fill the pipeline', reasoning: 'No new leads captured yet today.', to: '/dashboard/audit' })
+  }
+  if (stats.pipelineValue > 0) {
+    recs.push({ priority: 'medium', action: 'Review the pipeline for stalled deals', reasoning: `$${stats.pipelineValue.toLocaleString()} currently sitting in the pipeline.`, to: '/dashboard/crm' })
+  }
+  recs.push({ priority: 'low', action: 'Check Nova Revive for cold leads', reasoning: 'Automatic follow-up sequences run daily, but a manual check catches edge cases.', to: '/dashboard/revive' })
+  return recs.slice(0, 3)
+}
+
+const PRIORITY_COLOR = { high: '#f87171', medium: GOLD, low: '#60a5fa' }
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [stats, setStats] = useState({
     agents: 0, callsToday: 0, smsToday: 0, emailsToday: 0, socialToday: 0, auditsToday: 0,
-    leadsRevivedToday: 0, meetingsBooked: 0, pipelineValue: 0,
+    leadsRevivedToday: 0, meetingsToday: 0, pipelineValue: 0, leadsToday: 0,
   })
   const [activity, setActivity] = useState([])
   const [chartData, setChartData] = useState([])
+  const [briefing, setBriefing] = useState(null)
+  const [recommendations, setRecommendations] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -47,7 +74,10 @@ export default function Dashboard() {
       const today = new Date(); today.setHours(0, 0, 0, 0)
 
       try {
-        const [agentsRes, callsRes, smsRes, emailRes, socialRes, auditsTodayRes, reviveTodayRes, meetingsRes, pipelineRes] = await Promise.all([
+        const [
+          agentsRes, callsRes, smsRes, emailRes, socialRes, auditsTodayRes, reviveTodayRes,
+          meetingsTodayRes, leadsTodayRes, dealsRes, briefingRes, alerts,
+        ] = await Promise.all([
           supabase.from('nova_ai_agents').select('id', { count: 'exact', head: true }),
           supabase.from('nova_ai_calls').select('id,created_at').gte('created_at', today.toISOString()),
           supabase.from('nova_ai_sms_logs').select('id,created_at').gte('created_at', today.toISOString()),
@@ -55,11 +85,14 @@ export default function Dashboard() {
           supabase.from('nova_ai_social_logs').select('id,created_at').gte('created_at', today.toISOString()),
           supabase.from('nova_ai_audits').select('id', { count: 'exact', head: true }).gte('created_at', today.toISOString()),
           supabase.from('nova_ai_revive_logs').select('id', { count: 'exact', head: true }).gte('created_at', today.toISOString()),
-          supabase.from('nova_ai_audits').select('id', { count: 'exact', head: true }).eq('meeting_booked', true),
-          supabase.from('nova_ai_audits').select('revenue_leak_monthly').eq('became_client', false),
+          supabase.from('nova_book_meetings').select('id', { count: 'exact', head: true }).gte('created_at', today.toISOString()),
+          supabase.from('nova_crm_contacts').select('id', { count: 'exact', head: true }).gte('created_at', today.toISOString()),
+          supabase.from('nova_crm_deals').select('value').neq('stage', 'churned'),
+          supabase.from('nova_insights_briefings').select('*').eq('briefing_type', 'daily').order('created_at', { ascending: false }).limit(1),
+          fetch('/api/nova-crm?action=get_alerts').then((r) => r.ok ? r.json() : []).catch(() => []),
         ])
 
-        setStats({
+        const nextStats = {
           agents: agentsRes.count || 0,
           callsToday: callsRes.data?.length || 0,
           smsToday: smsRes.data?.length || 0,
@@ -67,16 +100,21 @@ export default function Dashboard() {
           socialToday: socialRes.data?.length || 0,
           auditsToday: auditsTodayRes.count || 0,
           leadsRevivedToday: reviveTodayRes.count || 0,
-          meetingsBooked: meetingsRes.count || 0,
-          pipelineValue: (pipelineRes.data || []).reduce((sum, r) => sum + (Number(r.revenue_leak_monthly) || 0), 0),
-        })
+          meetingsToday: meetingsTodayRes.count || 0,
+          leadsToday: leadsTodayRes.count || 0,
+          pipelineValue: (dealsRes.data || []).reduce((sum, d) => sum + (Number(d.value) || 0), 0),
+        }
+        setStats(nextStats)
+        setBriefing(briefingRes.data?.[0] || null)
+        setRecommendations(buildRecommendations(nextStats, Array.isArray(alerts) ? alerts : []))
 
-        const [recentCalls, recentSms, recentEmails, recentSocial, recentRevive] = await Promise.all([
-          supabase.from('nova_ai_calls').select('id,caller_phone,outcome,created_at').order('created_at', { ascending: false }).limit(6),
-          supabase.from('nova_ai_sms_logs').select('id,contact_phone,direction,platform,created_at').order('created_at', { ascending: false }).limit(6),
-          supabase.from('nova_ai_email_logs').select('id,from_email,category,created_at').order('created_at', { ascending: false }).limit(6),
-          supabase.from('nova_ai_social_logs').select('id,platform,from_user,event_type,created_at').order('created_at', { ascending: false }).limit(6),
-          supabase.from('nova_ai_revive_logs').select('id,channel,outcome,created_at').order('created_at', { ascending: false }).limit(6),
+        const [recentCalls, recentSms, recentEmails, recentSocial, recentRevive, recentMeetings] = await Promise.all([
+          supabase.from('nova_ai_calls').select('id,caller_phone,outcome,created_at').order('created_at', { ascending: false }).limit(5),
+          supabase.from('nova_ai_sms_logs').select('id,contact_phone,direction,platform,created_at').order('created_at', { ascending: false }).limit(5),
+          supabase.from('nova_ai_email_logs').select('id,from_email,category,created_at').order('created_at', { ascending: false }).limit(5),
+          supabase.from('nova_ai_social_logs').select('id,platform,from_user,event_type,created_at').order('created_at', { ascending: false }).limit(5),
+          supabase.from('nova_ai_revive_logs').select('id,channel,outcome,created_at').order('created_at', { ascending: false }).limit(5),
+          supabase.from('nova_book_meetings').select('id,contact_name,meeting_type,created_at').order('created_at', { ascending: false }).limit(5),
         ])
 
         const merged = [
@@ -85,7 +123,8 @@ export default function Dashboard() {
           ...(recentEmails.data || []).map((e) => ({ id: `email-${e.id}`, type: 'email', text: `Email ${e.category || 'logged'} — ${e.from_email || 'unknown'}`, ts: e.created_at })),
           ...(recentSocial.data || []).map((s) => ({ id: `social-${s.id}`, type: 'social', text: `${s.platform || 'Social'} ${s.event_type || 'reply'} — ${s.from_user || 'unknown'}`, ts: s.created_at })),
           ...(recentRevive.data || []).map((r) => ({ id: `revive-${r.id}`, type: 'revive', text: `Revive ${r.channel || ''} — ${r.outcome || 'sent'}`, ts: r.created_at })),
-        ].sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, 12)
+          ...(recentMeetings.data || []).map((m) => ({ id: `book-${m.id}`, type: 'book', text: `Meeting booked — ${m.contact_name || 'unknown'} (${m.meeting_type || ''})`, ts: m.created_at })),
+        ].sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, 20)
 
         setActivity(merged)
 
@@ -113,19 +152,51 @@ export default function Dashboard() {
 
   return (
     <DashboardShell title="Dashboard">
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-4">
-        <StatCard icon={Phone} label="Calls Today" value={loading ? '—' : stats.callsToday} />
-        <StatCard icon={MessageSquare} label="SMS Sent Today" value={loading ? '—' : stats.smsToday} />
-        <StatCard icon={Mail} label="Emails Today" value={loading ? '—' : stats.emailsToday} />
-        <StatCard icon={Share2} label="Social Replies Today" value={loading ? '—' : stats.socialToday} />
-        <StatCard icon={Search} label="Audits Today" value={loading ? '—' : stats.auditsToday} />
-        <StatCard icon={RefreshCcw} label="Leads Revived Today" value={loading ? '—' : stats.leadsRevivedToday} />
+      {/* Today's AI Briefing */}
+      <div className="rounded-xl p-8 mb-6" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A', borderLeftWidth: 3, borderLeftColor: GOLD }}>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-bold tracking-[0.15em] uppercase" style={{ color: GOLD }}>Today's AI Executive Briefing</p>
+          <button onClick={() => navigate('/dashboard/insights')} className="flex items-center gap-1 text-[11px] font-bold uppercase" style={{ color: GOLD }}>
+            View Insights <ArrowUpRight className="w-3 h-3" />
+          </button>
+        </div>
+        {loading ? (
+          <p className="text-sm" style={{ color: '#666666' }}>Loading…</p>
+        ) : briefing ? (
+          <p className="text-base leading-relaxed" style={{ color: '#eee' }}>{briefing.briefing_text}</p>
+        ) : (
+          <p className="text-sm" style={{ color: '#666666' }}>Generating your morning briefing… Visit Nova Insights to generate today's briefing now.</p>
+        )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-        <StatCard icon={DollarSign} label="Pipeline Value / mo" value={loading ? '—' : `$${stats.pipelineValue.toLocaleString()}`} />
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-4">
+        <StatCard icon={Phone} label="Calls Answered Today" value={loading ? '—' : stats.callsToday} />
+        <StatCard icon={MessageSquare} label="Texts Sent Today" value={loading ? '—' : stats.smsToday} />
+        <StatCard icon={Mail} label="Emails Handled Today" value={loading ? '—' : stats.emailsToday} />
+        <StatCard icon={CalendarClock} label="Meetings Booked Today" value={loading ? '—' : stats.meetingsToday} />
+        <StatCard icon={DollarSign} label="Revenue Pipeline" value={loading ? '—' : `$${stats.pipelineValue.toLocaleString()}`} />
+        <StatCard icon={Target} label="Leads Captured Today" value={loading ? '—' : stats.leadsToday} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard icon={Share2} label="Social DMs Replied" value={loading ? '—' : stats.socialToday} />
+        <StatCard icon={Search} label="Audits Today" value={loading ? '—' : stats.auditsToday} />
+        <StatCard icon={RefreshCcw} label="Leads Revived Today" value={loading ? '—' : stats.leadsRevivedToday} />
         <StatCard icon={Bot} label="Active Agents" value={loading ? '—' : stats.agents} />
-        <StatCard icon={Target} label="Meetings Booked" value={loading ? '—' : stats.meetingsBooked} />
+      </div>
+
+      {/* Today's Recommendations */}
+      <div className="rounded-xl p-6 mb-6" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A' }}>
+        <p className="text-xs font-bold tracking-[0.15em] uppercase mb-5" style={{ color: GOLD }}>Today's Recommendations</p>
+        <div className="grid md:grid-cols-3 gap-4">
+          {recommendations.map((r, i) => (
+            <button key={i} onClick={() => r.to && navigate(r.to)} className="text-left p-4 rounded-lg transition-colors" style={{ background: '#080808', border: '1px solid #2A2A2A' }}>
+              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full" style={{ background: `${PRIORITY_COLOR[r.priority]}18`, color: PRIORITY_COLOR[r.priority] }}>{r.priority}</span>
+              <p className="text-sm font-semibold mt-2" style={{ color: '#fff' }}>{r.action}</p>
+              <p className="text-[11px] mt-1" style={{ color: '#666666' }}>{r.reasoning}</p>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid xl:grid-cols-5 gap-4 mb-6">

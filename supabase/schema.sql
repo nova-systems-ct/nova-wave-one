@@ -149,3 +149,314 @@ ALTER TABLE nova_ai_audits ADD COLUMN IF NOT EXISTS days_since_contact INTEGER;
 -- and incoming-call routing.
 ALTER TABLE nova_ai_agents ADD COLUMN IF NOT EXISTS meta_account_id TEXT;
 ALTER TABLE nova_ai_agents ADD COLUMN IF NOT EXISTS twilio_number_sid TEXT;
+
+-- ============================================================================================
+-- WAVE ONE — 21 ENGINES / 5 DEPARTMENTS EXPANSION
+-- Shared systems (CRM, Memory, Knowledge, Flow, Insights) plus one table per new engine.
+-- Safe to run multiple times — every statement below is idempotent.
+-- ============================================================================================
+
+-- ── Nova Knowledge — new sections on the existing per-agent knowledge base table. ───────────
+-- (nova_ai_knowledge_bases itself is defined in nova-systems-copy's schema, not here — these
+-- ALTERs are additive and safe whether or not this exact column set already exists.)
+ALTER TABLE nova_ai_knowledge_bases ADD COLUMN IF NOT EXISTS staff JSONB;
+ALTER TABLE nova_ai_knowledge_bases ADD COLUMN IF NOT EXISTS policies TEXT;
+ALTER TABLE nova_ai_knowledge_bases ADD COLUMN IF NOT EXISTS tone TEXT;
+ALTER TABLE nova_ai_knowledge_bases ADD COLUMN IF NOT EXISTS competitors TEXT;
+ALTER TABLE nova_ai_knowledge_bases ADD COLUMN IF NOT EXISTS pricing TEXT;
+
+-- ── Nova CRM — the central contact/activity/deal brain every engine reads and writes. ───────
+
+CREATE TABLE IF NOT EXISTS nova_crm_contacts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  business_name TEXT,
+  owner_name TEXT,
+  phone TEXT,
+  email TEXT,
+  website TEXT,
+  city TEXT,
+  industry TEXT,
+  source TEXT,
+  status TEXT DEFAULT 'cold_lead',
+  lead_score INTEGER DEFAULT 0,
+  deal_value NUMERIC DEFAULT 0,
+  notes TEXT,
+  audit_id UUID,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS nova_crm_contacts_phone_idx ON nova_crm_contacts (phone);
+CREATE INDEX IF NOT EXISTS nova_crm_contacts_email_idx ON nova_crm_contacts (email);
+CREATE INDEX IF NOT EXISTS nova_crm_contacts_status_idx ON nova_crm_contacts (status);
+
+CREATE TABLE IF NOT EXISTS nova_crm_activities (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contact_id UUID REFERENCES nova_crm_contacts(id) ON DELETE CASCADE,
+  engine TEXT,
+  direction TEXT,
+  summary TEXT,
+  outcome TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS nova_crm_activities_contact_idx ON nova_crm_activities (contact_id);
+
+CREATE TABLE IF NOT EXISTS nova_crm_deals (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contact_id UUID REFERENCES nova_crm_contacts(id) ON DELETE CASCADE,
+  title TEXT,
+  stage TEXT DEFAULT 'prospect',
+  value NUMERIC DEFAULT 0,
+  probability INTEGER DEFAULT 0,
+  expected_close DATE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS nova_crm_deals_contact_idx ON nova_crm_deals (contact_id);
+
+-- ── Nova Memory — permanent per-contact personalization layer. ──────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_memory (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contact_id UUID,
+  contact_phone TEXT,
+  contact_email TEXT,
+  preferred_language TEXT DEFAULT 'en',
+  preferred_channel TEXT DEFAULT 'sms',
+  best_time_to_contact TEXT,
+  topics_discussed TEXT[],
+  sentiment TEXT DEFAULT 'neutral',
+  last_topic_discussed TEXT,
+  purchase_history JSONB,
+  appointment_history JSONB,
+  appointment_count INTEGER DEFAULT 0,
+  response_rate NUMERIC DEFAULT 0,
+  special_notes TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS nova_memory_contact_idx ON nova_memory (contact_id);
+CREATE INDEX IF NOT EXISTS nova_memory_phone_idx ON nova_memory (contact_phone);
+CREATE INDEX IF NOT EXISTS nova_memory_email_idx ON nova_memory (contact_email);
+
+-- ── Nova Book — native booking system (no external Cal.com dependency). ─────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_book_meetings (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contact_id UUID,
+  contact_name TEXT,
+  contact_email TEXT,
+  contact_phone TEXT,
+  meeting_type TEXT,
+  meeting_date DATE,
+  meeting_time TEXT,
+  status TEXT DEFAULT 'confirmed',
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Finances — invoicing, MRR, expenses. ────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_finances_invoices (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  client_name TEXT,
+  client_email TEXT,
+  services JSONB,
+  subtotal NUMERIC,
+  tax NUMERIC DEFAULT 0,
+  total NUMERIC,
+  due_date DATE,
+  status TEXT DEFAULT 'unpaid',
+  stripe_payment_link TEXT,
+  stripe_payment_intent TEXT,
+  paid_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS nova_finances_expenses (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  category TEXT,
+  description TEXT,
+  amount NUMERIC,
+  date DATE,
+  receipt_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Flow — workflow automation connecting every engine. ────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_flow_workflows (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT,
+  trigger_type TEXT,
+  trigger_conditions JSONB,
+  actions JSONB,
+  active BOOLEAN DEFAULT TRUE,
+  run_count INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS nova_flow_runs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  workflow_id UUID,
+  contact_id UUID,
+  status TEXT,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+
+-- ── Nova Tron — world intelligence engine. ───────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_tron_trends (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  connecticut_opportunities JSONB,
+  ai_developments JSONB,
+  content_ideas JSONB,
+  alerts JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Social — scheduled post publishing (in addition to the existing DM/comment log). ──
+
+CREATE TABLE IF NOT EXISTS nova_social_posts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  platform TEXT,
+  content TEXT,
+  media_url TEXT,
+  scheduled_at TIMESTAMPTZ,
+  published_at TIMESTAMPTZ,
+  status TEXT DEFAULT 'scheduled',
+  engagement JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Reviews — reputation management. ────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_reviews (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  business_id UUID,
+  place_id TEXT,
+  platform TEXT DEFAULT 'google',
+  reviewer_name TEXT,
+  rating INTEGER,
+  review_text TEXT,
+  ai_response TEXT,
+  response_sent BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Insights — executive AI advisor. ────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_insights_briefings (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  briefing_text TEXT,
+  briefing_type TEXT DEFAULT 'daily',
+  stats_snapshot JSONB,
+  anomalies JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Media — AI-generated creative assets. ───────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_media_assets (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  type TEXT,
+  title TEXT,
+  content TEXT,
+  image_url TEXT,
+  platform TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Hire — recruiting. ───────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_hire_applications (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  position TEXT,
+  name TEXT,
+  email TEXT,
+  phone TEXT,
+  cover_letter TEXT,
+  portfolio_url TEXT,
+  resume_url TEXT,
+  ai_score INTEGER,
+  ai_summary TEXT,
+  status TEXT DEFAULT 'new',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Client — self-service client portal accounts. ──────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_client_accounts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  business_name TEXT,
+  email TEXT UNIQUE,
+  password_hash TEXT,
+  crm_contact_id UUID,
+  status TEXT DEFAULT 'active',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS nova_client_messages (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  client_account_id UUID REFERENCES nova_client_accounts(id) ON DELETE CASCADE,
+  direction TEXT,
+  message TEXT,
+  read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS nova_client_files (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  client_account_id UUID REFERENCES nova_client_accounts(id) ON DELETE CASCADE,
+  file_name TEXT,
+  file_url TEXT,
+  uploaded_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Law — contracts, e-signatures, licenses. ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_law_contracts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contact_id UUID,
+  contract_type TEXT,
+  content TEXT,
+  signed BOOLEAN DEFAULT FALSE,
+  signature_data TEXT,
+  signed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS nova_law_licenses (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  license_name TEXT,
+  issuing_authority TEXT,
+  license_number TEXT,
+  expiry_date DATE,
+  status TEXT DEFAULT 'active',
+  reminder_sent BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Docs — generated document library (pitch decks, proposals, contracts). ─────────────
+
+CREATE TABLE IF NOT EXISTS nova_documents (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contact_id UUID,
+  document_type TEXT,
+  title TEXT,
+  file_data TEXT,
+  share_token TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Nova Tax — receipts on top of nova_finances_expenses. ────────────────────────────────────
+
+ALTER TABLE nova_finances_expenses ADD COLUMN IF NOT EXISTS tax_category TEXT;
+
+CREATE TABLE IF NOT EXISTS nova_tax_calendar (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title TEXT,
+  due_date DATE,
+  category TEXT,
+  reminder_sent BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

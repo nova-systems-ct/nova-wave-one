@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Share2, Instagram, Facebook, MessageCircle } from 'lucide-react'
+import { Share2, Instagram, Facebook, MessageCircle, CalendarClock, Send } from 'lucide-react'
 import DashboardShell from '../../components/DashboardShell'
 import { SocialAPI } from '../../lib/api'
 
 const GOLD = '#C8A96E'
-const TABS = ['Activity Feed', 'Setup']
+const TABS = ['Activity Feed', 'Schedule', 'Setup']
 
 const PLATFORM_ICON = { instagram: Instagram, facebook: Facebook }
 const PLATFORM_COLOR = { instagram: '#e1306c', facebook: '#1877f2' }
+const inputStyle = { width: '100%', padding: '10px 12px', background: '#080808', border: '1px solid #2A2A2A', borderRadius: 8, color: '#fff', fontSize: 13, outline: 'none' }
 
 function ActivityFeedTab() {
   const [logs, setLogs] = useState([])
@@ -53,6 +54,61 @@ function ActivityFeedTab() {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+const STATUS_COLOR = { scheduled: GOLD, published: '#4ade80', failed: '#f87171' }
+
+function ScheduleTab() {
+  const [posts, setPosts] = useState([])
+  const [platform, setPlatform] = useState('instagram')
+  const [content, setContent] = useState('')
+  const [scheduledAt, setScheduledAt] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = () => SocialAPI.getScheduled().then((d) => setPosts(Array.isArray(d) ? d : [])).catch(() => {})
+  useEffect(() => { load() }, [])
+
+  const schedule = async () => {
+    if (!content.trim() || !scheduledAt) return
+    setSaving(true)
+    try { await SocialAPI.schedulePost({ platform, content, scheduled_at: new Date(scheduledAt).toISOString() }); setContent(''); load() } catch (err) { alert(err.message) }
+    setSaving(false)
+  }
+
+  const publishNow = async (id) => {
+    await SocialAPI.publishPost({ id }).catch((err) => alert(err.message))
+    load()
+  }
+
+  return (
+    <div className="grid lg:grid-cols-[1fr_1.2fr] gap-5">
+      <div className="rounded-xl p-6" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A' }}>
+        <p className="text-xs font-bold tracking-[0.15em] uppercase mb-4" style={{ color: GOLD }}>Schedule a Post</p>
+        <select style={{ ...inputStyle, marginBottom: 10 }} value={platform} onChange={(e) => setPlatform(e.target.value)}>
+          {['instagram', 'facebook', 'linkedin', 'tiktok'].map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <textarea style={{ ...inputStyle, minHeight: 90, marginBottom: 10 }} placeholder="Post content…" value={content} onChange={(e) => setContent(e.target.value)} />
+        <input type="datetime-local" style={{ ...inputStyle, marginBottom: 12 }} value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+        <button onClick={schedule} disabled={saving} className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold uppercase rounded-lg" style={{ background: GOLD, color: '#080808' }}><CalendarClock className="w-3.5 h-3.5" /> {saving ? 'Scheduling…' : 'Schedule Post'}</button>
+      </div>
+      <div className="rounded-xl overflow-hidden" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A' }}>
+        <p className="text-xs font-bold tracking-[0.15em] uppercase px-6 py-4" style={{ color: GOLD, borderBottom: '1px solid #2A2A2A' }}>Queue</p>
+        {posts.length === 0 ? <p className="p-6 text-sm" style={{ color: '#666666' }}>Nothing scheduled yet.</p> : posts.map((p) => (
+          <div key={p.id} className="px-6 py-3" style={{ borderBottom: '1px solid #2A2A2A' }}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase" style={{ color: GOLD }}>{p.platform}</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase" style={{ background: `${STATUS_COLOR[p.status]}18`, color: STATUS_COLOR[p.status] }}>{p.status}</span>
+            </div>
+            <p className="text-sm mt-1 truncate" style={{ color: '#ccc' }}>{p.content}</p>
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-[11px]" style={{ color: '#666666' }}>{new Date(p.scheduled_at).toLocaleString()}</span>
+              {p.status === 'scheduled' && <button onClick={() => publishNow(p.id)} className="flex items-center gap-1 text-[11px] font-bold uppercase" style={{ color: GOLD }}><Send className="w-3 h-3" /> Publish Now</button>}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -114,6 +170,7 @@ export default function SocialHome() {
         ))}
       </div>
       {tab === 'Activity Feed' && <ActivityFeedTab />}
+      {tab === 'Schedule' && <ScheduleTab />}
       {tab === 'Setup' && <SetupTab />}
     </DashboardShell>
   )

@@ -7,7 +7,12 @@
   },
   "crons": [
     { "path": "/api/nova-revive?action=weekly_report", "schedule": "0 9 * * 1" },
-    { "path": "/api/nova-revive?action=check_all_leads", "schedule": "0 0 * * *" }
+    { "path": "/api/nova-revive?action=check_all_leads", "schedule": "0 0 * * *" },
+    { "path": "/api/nova-insights?action=generate_briefing", "schedule": "0 7 * * *" },
+    { "path": "/api/nova-insights?action=generate_weekly_report", "schedule": "0 9 * * 1" },
+    { "path": "/api/nova-tron?action=run_analysis", "schedule": "0 */6 * * *" },
+    { "path": "/api/nova-social?action=publish_due_posts", "schedule": "*/15 * * * *" },
+    { "path": "/api/nova-reviews?action=fetch_reviews", "schedule": "0 * * * *" }
   ],
   "framework": "vite",
   "buildCommand": "npm run build",
