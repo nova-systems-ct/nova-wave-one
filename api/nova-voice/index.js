@@ -3,6 +3,7 @@ import { sanitize } from '../_sanitize.js'
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { loadAgentById } from '../_agents.js'
 import { alertIsaac, reportEngineError } from '../_automation.js'
+import { logEnvCheck } from '../_envCheck.js'
 
 function toE164(phone) {
   const digits = String(phone || '').replace(/[^0-9]/g, '')
@@ -220,21 +221,27 @@ async function handleGetVoices(req, res) {
 // ================================================================================= router ==
 
 export default async function handler(req, res) {
-  if (setCors(req, res)) return
-  const action = typeof req.query?.action === 'string' ? req.query.action : ''
+  try {
+    if (setCors(req, res)) return
+    logEnvCheck('Nova Voice', ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER', 'RENDER_STREAM_URL', 'ANTHROPIC_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY'])
+    const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
-  switch (action) {
-    case 'make_call':                return handleMakeCall(req, res)
-    case 'call_completed':           return handleCallCompleted(req, res)
-    case 'send_voicemail_summary':   return handleSendVoicemailSummary(req, res)
-    case 'get_calls':                return handleGetCalls(req, res)
-    case 'render_status':            return handleRenderStatus(req, res)
-    case 'get_agents':               return handleGetAgents(req, res)
-    case 'get_agent':                return handleGetAgent(req, res)
-    case 'create_agent':             return handleCreateAgent(req, res)
-    case 'get_voices':                return handleGetVoices(req, res)
-    default:
-      if (req.method === 'GET' && !action) return handleGetAgents(req, res)
-      return res.status(400).json({ error: `Unknown action: ${action}` })
+    switch (action) {
+      case 'make_call':                return await handleMakeCall(req, res)
+      case 'call_completed':           return await handleCallCompleted(req, res)
+      case 'send_voicemail_summary':   return await handleSendVoicemailSummary(req, res)
+      case 'get_calls':                return await handleGetCalls(req, res)
+      case 'render_status':            return await handleRenderStatus(req, res)
+      case 'get_agents':               return await handleGetAgents(req, res)
+      case 'get_agent':                return await handleGetAgent(req, res)
+      case 'create_agent':             return await handleCreateAgent(req, res)
+      case 'get_voices':                return await handleGetVoices(req, res)
+      default:
+        if (req.method === 'GET' && !action) return await handleGetAgents(req, res)
+        return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+  } catch (err) {
+    console.error('[Nova Voice] Unhandled error:', err)
+    if (!res.headersSent) return res.status(500).json({ error: 'Something went wrong. Please try again.' })
   }
 }

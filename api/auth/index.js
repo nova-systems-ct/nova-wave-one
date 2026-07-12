@@ -1,6 +1,7 @@
 import { setCors } from '../_cors.js'
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { requireAuthenticatedUser } from '../_auth.js'
+import { logEnvCheck } from '../_envCheck.js'
 
 // Reuses the nova_ai_settings table already created by nova-systems.app in the same
 // Supabase project — both apps share one set of third-party API keys for this business.
@@ -49,12 +50,18 @@ async function handleSetSettings(req, res) {
 }
 
 export default async function handler(req, res) {
-  if (setCors(req, res)) return
-  const action = typeof req.query?.action === 'string' ? req.query.action : ''
-  switch (action) {
-    case 'get_settings': return handleGetSettings(req, res)
-    case 'set_settings': return handleSetSettings(req, res)
-    default:
-      return res.status(400).json({ error: `Unknown action: ${action}` })
+  try {
+    if (setCors(req, res)) return
+    logEnvCheck('Nova Auth', ['VITE_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])
+    const action = typeof req.query?.action === 'string' ? req.query.action : ''
+    switch (action) {
+      case 'get_settings': return await handleGetSettings(req, res)
+      case 'set_settings': return await handleSetSettings(req, res)
+      default:
+        return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+  } catch (err) {
+    console.error('[Nova Auth] Unhandled error:', err)
+    if (!res.headersSent) return res.status(500).json({ error: 'Something went wrong. Please try again.' })
   }
 }

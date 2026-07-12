@@ -114,7 +114,6 @@ function buildFindings({ business_name, scores, revenueLeak, fcp, googleBiz, com
 
 async function handleRunAudit(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
-  checkEnvAndWarn()
 
   const b = req.body || {}
   const business_name = sanitize(b.business_name, 200)
@@ -448,6 +447,7 @@ async function handleRunBulkAudits(req, res) {
 export default async function handler(req, res) {
   try {
     if (setCors(req, res)) return
+    checkEnvAndWarn()
     const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
     switch (action) {

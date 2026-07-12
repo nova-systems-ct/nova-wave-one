@@ -6,6 +6,7 @@ import {
   isStopMessage, isOptedOut, optOutContact, underDailyRateLimit,
   passesContentFilter, isLowConfidence, alertIsaac, alertHotLeadReply, reportEngineError, personalize,
 } from '../_automation.js'
+import { logEnvCheck } from '../_envCheck.js'
 
 const CATEGORIES = ['Important', 'Client', 'Lead', 'Spam', 'Automated']
 const FROM_ADDRESS = 'hello@nova-systems.app'
@@ -314,22 +315,28 @@ async function handleApproveSend(req, res) {
 // ================================================================================= router ==
 
 export default async function handler(req, res) {
-  if (setCors(req, res)) return
-  const action = typeof req.query?.action === 'string' ? req.query.action : ''
+  try {
+    if (setCors(req, res)) return
+    logEnvCheck('Nova Email', ['RESEND_API_KEY', 'ANTHROPIC_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'])
+    const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
-  switch (action) {
-    case 'send_email':          return handleSendEmail(req, res)
-    case 'send_campaign':       return handleSendCampaign(req, res)
-    case 'generate_reply':      return handleGenerateReply(req, res)
-    case 'process_inbound':     return handleProcessInbound(req, res)
-    case 'daily_summary':       return handleDailySummary(req, res)
-    case 'get_emails':          return handleGetEmails(req, res)
-    case 'update_email_status': return handleUpdateEmailStatus(req, res)
-    case 'approve_send':        return handleApproveSend(req, res)
-    // Back-compat with the earlier stub's action name.
-    case 'send_outbound':       return handleSendEmail(req, res)
-    default:
-      if (req.method === 'GET' && !action) return handleGetEmails(req, res)
-      return res.status(400).json({ error: `Unknown action: ${action}` })
+    switch (action) {
+      case 'send_email':          return await handleSendEmail(req, res)
+      case 'send_campaign':       return await handleSendCampaign(req, res)
+      case 'generate_reply':      return await handleGenerateReply(req, res)
+      case 'process_inbound':     return await handleProcessInbound(req, res)
+      case 'daily_summary':       return await handleDailySummary(req, res)
+      case 'get_emails':          return await handleGetEmails(req, res)
+      case 'update_email_status': return await handleUpdateEmailStatus(req, res)
+      case 'approve_send':        return await handleApproveSend(req, res)
+      // Back-compat with the earlier stub's action name.
+      case 'send_outbound':       return await handleSendEmail(req, res)
+      default:
+        if (req.method === 'GET' && !action) return await handleGetEmails(req, res)
+        return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+  } catch (err) {
+    console.error('[Nova Email] Unhandled error:', err)
+    if (!res.headersSent) return res.status(500).json({ error: 'Something went wrong. Please try again.' })
   }
 }

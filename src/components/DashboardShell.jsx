@@ -1,5 +1,6 @@
 import Sidebar from './Sidebar'
 import Navbar from './Navbar'
+import Footer from './Footer'
 import { useAuthGuard } from '../hooks/useAuthGuard'
 
 export default function DashboardShell({ title, children }) {
@@ -10,6 +11,7 @@ export default function DashboardShell({ title, children }) {
       <div style={{ marginLeft: 260 }}>
         <Navbar title={title} />
         <main className="px-8 py-8">{children}</main>
+        <Footer />
       </div>
     </div>
   )

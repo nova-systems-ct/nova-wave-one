@@ -1,11 +1,26 @@
 import { validateTwilioSignature, escapeXml, twiml } from './_twilio.js'
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
+import { logEnvCheck } from '../_envCheck.js'
 
 // Twilio voice webhook — see render-server/server.js for why the <Connect><Stream> target
 // must point at the separately-hosted always-on WebSocket service, not this Vercel deployment.
 export default async function handler(req, res) {
+  logEnvCheck('Nova Voice — incoming-call', ['TWILIO_AUTH_TOKEN', 'RENDER_STREAM_URL', 'SUPABASE_SERVICE_ROLE_KEY'])
+
   if (req.method !== 'POST') return res.status(405).send('Method not allowed')
 
+  try {
+    return await handleIncomingCall(req, res)
+  } catch (err) {
+    console.error('[Nova Voice — incoming-call] Unhandled error:', err)
+    if (!res.headersSent) {
+      res.setHeader('Content-Type', 'text/xml')
+      return res.status(200).send(twiml('<Say voice="Polly.Joanna">Sorry, something went wrong. Please try calling back in a moment.</Say>'))
+    }
+  }
+}
+
+async function handleIncomingCall(req, res) {
   const authToken = process.env.TWILIO_AUTH_TOKEN
   if (authToken) {
     const fullUrl = `https://${req.headers.host}${req.url}`

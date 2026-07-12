@@ -9,6 +9,7 @@ import {
   isOptedOut, underDailyRateLimit, passesContentFilter,
   alertIsaac, reportEngineError, personalize, daysSince, logRevive,
 } from '../_automation.js'
+import { logEnvCheck } from '../_envCheck.js'
 
 // Bounds a single check_all_leads run so it can't exceed Vercel's function timeout on a very
 // large lead database — a scheduled run every night comfortably works through the whole table
@@ -352,20 +353,26 @@ async function handleWeeklyReport(req, res) {
 // ================================================================================= router ==
 
 export default async function handler(req, res) {
-  if (setCors(req, res)) return
-  const action = typeof req.query?.action === 'string' ? req.query.action : ''
+  try {
+    if (setCors(req, res)) return
+    logEnvCheck('Nova Revive', ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER', 'RESEND_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'ISAAC_ALERT_PHONE'])
+    const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
-  switch (action) {
-    case 'check_all_leads': return handleCheckAllLeads(req, res)
-    case 'run_campaign':    return handleRunCampaign(req, res)
-    case 'get_cold_leads':  return handleGetColdLeads(req, res)
-    case 'opt_out_lead':    return handleOptOutLead(req, res)
-    case 'get_revive_logs': return handleGetReviveLogs(req, res)
-    case 'weekly_report':   return handleWeeklyReport(req, res)
-    // Back-compat with the earlier stub's action name.
-    case 'get_queue':       return handleGetColdLeads(req, res)
-    default:
-      if (req.method === 'GET' && !action) return handleGetColdLeads(req, res)
-      return res.status(400).json({ error: `Unknown action: ${action}` })
+    switch (action) {
+      case 'check_all_leads': return await handleCheckAllLeads(req, res)
+      case 'run_campaign':    return await handleRunCampaign(req, res)
+      case 'get_cold_leads':  return await handleGetColdLeads(req, res)
+      case 'opt_out_lead':    return await handleOptOutLead(req, res)
+      case 'get_revive_logs': return await handleGetReviveLogs(req, res)
+      case 'weekly_report':   return await handleWeeklyReport(req, res)
+      // Back-compat with the earlier stub's action name.
+      case 'get_queue':       return await handleGetColdLeads(req, res)
+      default:
+        if (req.method === 'GET' && !action) return await handleGetColdLeads(req, res)
+        return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+  } catch (err) {
+    console.error('[Nova Revive] Unhandled error:', err)
+    if (!res.headersSent) return res.status(500).json({ error: 'Something went wrong. Please try again.' })
   }
 }

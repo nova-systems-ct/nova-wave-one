@@ -5,6 +5,14 @@ import { supabase } from '../lib/supabase'
 
 const GOLD = '#C8A96E'
 
+// Checked before Supabase so login always works even if VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY
+// aren't set in this deployment's environment (Supabase is still tried as a fallback below, so
+// any other real account keeps working normally).
+const HARDCODED_CREDENTIALS = [
+  { email: 'isaac@nova-systems.app', password: 'NovaWave2024' },
+  { email: 'isaac_0427@icloud.com', password: 'NovaSystem2024' },
+]
+
 export default function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
@@ -22,11 +30,24 @@ export default function Login() {
     setError('')
     setLoading(true)
 
+    const enteredEmail = email.trim().toLowerCase()
+    const hardcodedMatch = HARDCODED_CREDENTIALS.find(
+      (c) => c.email.toLowerCase() === enteredEmail && c.password === password
+    )
+    if (hardcodedMatch) {
+      localStorage.setItem('nova_wave_authenticated', 'true')
+      localStorage.setItem('nova_wave_user', hardcodedMatch.email)
+      navigate('/dashboard')
+      setLoading(false)
+      return
+    }
+
     if (supabase) {
       try {
         const { data, error: authErr } = await supabase.auth.signInWithPassword({ email, password })
         if (!authErr && data?.user) {
           localStorage.setItem('nova_wave_authenticated', 'true')
+          localStorage.setItem('nova_wave_user', data.user.email || email)
           navigate('/dashboard')
           setLoading(false)
           return
@@ -34,7 +55,7 @@ export default function Login() {
       } catch {}
     }
 
-    setError('Invalid credentials. This system is invite only.')
+    setError('Invalid email or password. Please try again.')
     setLoading(false)
   }
 
@@ -79,7 +100,7 @@ export default function Login() {
           Contact <a href="mailto:hello@nova-systems.app" style={{ color: GOLD }}>hello@nova-systems.app</a> for access.
         </p>
         <p className="text-center mt-3 text-[10px]" style={{ color: '#444444' }}>
-          Test login — isaac@nova-systems.app
+          Use isaac@nova-systems.app to log in.
         </p>
       </div>
     </div>

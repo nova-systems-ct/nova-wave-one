@@ -9,6 +9,7 @@ import {
   isStopMessage, isOptedOut, optOutContact, underDailyRateLimit,
   passesContentFilter, alertHotLeadReply, reportEngineError, personalize,
 } from '../_automation.js'
+import { logEnvCheck } from '../_envCheck.js'
 
 const SMS_CHANNEL_INSTRUCTIONS = 'You are texting with someone over SMS. Always be helpful, friendly, and concise. Keep replies under 160 characters when possible.'
 const WHATSAPP_CHANNEL_INSTRUCTIONS = 'You are messaging with someone over WhatsApp. Always be helpful, friendly, and concise. Keep replies under 200 characters when possible.'
@@ -290,24 +291,30 @@ async function handleSendWhatsapp(req, res) {
 // ================================================================================= router ==
 
 export default async function handler(req, res) {
-  if (setCors(req, res)) return
-  const action = typeof req.query?.action === 'string' ? req.query.action : ''
+  try {
+    if (setCors(req, res)) return
+    logEnvCheck('Nova Blue SMS', ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER', 'ANTHROPIC_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY'])
+    const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
-  switch (action) {
-    case 'send_sms':              return handleSendSms(req, res)
-    case 'receive_sms':           return handleReceiveInbound(req, res, { whatsapp: false })
-    case 'send_campaign':         return handleSendCampaign(req, res, { whatsapp: false })
-    case 'get_conversations':     return handleGetConversations(req, res)
-    case 'get_conversation':      return handleGetConversation(req, res)
-    case 'check_cold_leads':      return handleCheckColdLeads(req, res)
-    case 'send_whatsapp':         return handleSendWhatsapp(req, res)
-    case 'receive_whatsapp':      return handleReceiveInbound(req, res, { whatsapp: true })
-    case 'send_whatsapp_campaign': return handleSendCampaign(req, res, { whatsapp: true })
-    // Back-compat with the earlier stub's action name.
-    case 'send':                  return handleSendSms(req, res)
-    default:
-      if (req.method === 'GET' && !action) return handleGetConversations(req, res)
-      return res.status(400).json({ error: `Unknown action: ${action}` })
+    switch (action) {
+      case 'send_sms':              return await handleSendSms(req, res)
+      case 'receive_sms':           return await handleReceiveInbound(req, res, { whatsapp: false })
+      case 'send_campaign':         return await handleSendCampaign(req, res, { whatsapp: false })
+      case 'get_conversations':     return await handleGetConversations(req, res)
+      case 'get_conversation':      return await handleGetConversation(req, res)
+      case 'check_cold_leads':      return await handleCheckColdLeads(req, res)
+      case 'send_whatsapp':         return await handleSendWhatsapp(req, res)
+      case 'receive_whatsapp':      return await handleReceiveInbound(req, res, { whatsapp: true })
+      case 'send_whatsapp_campaign': return await handleSendCampaign(req, res, { whatsapp: true })
+      // Back-compat with the earlier stub's action name.
+      case 'send':                  return await handleSendSms(req, res)
+      default:
+        if (req.method === 'GET' && !action) return await handleGetConversations(req, res)
+        return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+  } catch (err) {
+    console.error('[Nova Blue SMS] Unhandled error:', err)
+    if (!res.headersSent) return res.status(500).json({ error: 'Something went wrong. Please try again.' })
   }
 }
 

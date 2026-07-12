@@ -6,6 +6,7 @@ import { sanitize } from '../_sanitize.js'
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { loadAgentByMetaAccount, loadKnowledgeBase, buildSystemPrompt, callClaude } from '../_agents.js'
 import { passesContentFilter, reportEngineError, alertHotLeadReply } from '../_automation.js'
+import { logEnvCheck } from '../_envCheck.js'
 
 const GRAPH_API = 'https://graph.facebook.com/v18.0'
 const DM_INSTRUCTIONS = 'You are responding to a social media direct message. Be friendly, helpful, and conversational. Use casual language. Keep replies under 200 characters. Use one emoji where appropriate.'
@@ -194,22 +195,28 @@ async function handleGetSocialLogs(req, res) {
 // ================================================================================= router ==
 
 export default async function handler(req, res) {
-  if (setCors(req, res)) return
-  const action = typeof req.query?.action === 'string' ? req.query.action : ''
+  try {
+    if (setCors(req, res)) return
+    logEnvCheck('Nova Social', ['META_ACCESS_TOKEN', 'META_WEBHOOK_VERIFY_TOKEN', 'ANTHROPIC_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY'])
+    const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
-  switch (action) {
-    case 'verify_webhook':          return handleVerifyWebhook(req, res)
-    case 'receive_webhook':         return handleReceiveWebhook(req, res)
-    // Meta's webhook subscription for a given field arrives as a GET (verification) once, then
-    // POSTs (events) after — but some setups point Instagram and Facebook at separate URLs, so
-    // these aliases are accepted too.
-    case 'receive_instagram_webhook': return handleReceiveWebhook(req, res)
-    case 'receive_facebook_webhook':  return handleReceiveWebhook(req, res)
-    case 'get_social_logs':         return handleGetSocialLogs(req, res)
-    case 'setup_status':            return handleSetupStatus(req, res)
-    default:
-      if (req.method === 'GET' && !action) return handleGetSocialLogs(req, res)
-      return res.status(400).json({ error: `Unknown action: ${action}` })
+    switch (action) {
+      case 'verify_webhook':          return await handleVerifyWebhook(req, res)
+      case 'receive_webhook':         return await handleReceiveWebhook(req, res)
+      // Meta's webhook subscription for a given field arrives as a GET (verification) once, then
+      // POSTs (events) after — but some setups point Instagram and Facebook at separate URLs, so
+      // these aliases are accepted too.
+      case 'receive_instagram_webhook': return await handleReceiveWebhook(req, res)
+      case 'receive_facebook_webhook':  return await handleReceiveWebhook(req, res)
+      case 'get_social_logs':         return await handleGetSocialLogs(req, res)
+      case 'setup_status':            return await handleSetupStatus(req, res)
+      default:
+        if (req.method === 'GET' && !action) return await handleGetSocialLogs(req, res)
+        return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+  } catch (err) {
+    console.error('[Nova Social] Unhandled error:', err)
+    if (!res.headersSent) return res.status(500).json({ error: 'Something went wrong. Please try again.' })
   }
 }
 
