@@ -1,33 +1,65 @@
 import { jsPDF } from 'jspdf'
 
-const GOLD = [200, 169, 110]
-const BLACK = [8, 8, 8]
-const WHITE = [255, 255, 255]
-const GRAY = [153, 153, 153]
-const RED = [248, 113, 113]
-const ORANGE = [251, 146, 60]
-const YELLOW = [251, 191, 36]
-const LIGHT_GREEN = [163, 230, 53]
-const GREEN = [74, 222, 128]
+// V2 luxury palette (matches src/pages/audit/theme.js COLORS) — matte black + gold, no fake
+// gradients in a PDF renderer, so panels are drawn as bordered rects instead of glass/blur.
+const BLACK = [5, 7, 11]
+const GOLD = [212, 175, 55]
+const GOLD_LIGHT = [244, 208, 111]
+const WHITE = [250, 250, 250]
+const GRAY = [156, 163, 175]
+const SUCCESS = [0, 200, 83]
+const WARNING = [255, 179, 0]
+const DANGER = [255, 82, 82]
+const HAIRLINE = [40, 38, 28] // subtle gold-tinted divider on the black background
 
-// red <40, orange 41-60, yellow 61-75, light green 76-85, gold 86-100 — matches the frontend's ScoreCircle
+// red <=40, orange 41-60, yellow 61-75, gold 76-85, success 86-100 — matches theme.js scoreColor
 function scoreColor(score) {
   if (score == null) return GRAY
-  if (score <= 40) return RED
-  if (score <= 60) return ORANGE
-  if (score <= 75) return YELLOW
-  if (score <= 85) return LIGHT_GREEN
-  return GOLD
+  if (score <= 40) return DANGER
+  if (score <= 60) return WARNING
+  if (score <= 75) return GOLD_LIGHT
+  if (score <= 85) return GOLD
+  return SUCCESS
 }
 
-function coverPage(doc, audit) {
+function pageFrame(doc) {
   doc.setFillColor(...BLACK)
   doc.rect(0, 0, 210, 297, 'F')
   doc.setDrawColor(...GOLD)
   doc.setLineWidth(0.3)
   doc.line(20, 12, 190, 12)
   doc.line(20, 285, 190, 285)
+}
 
+function header(doc, eyebrow, title) {
+  pageFrame(doc)
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.text('NOVA SYSTEMS', 20, 18)
+  if (eyebrow) doc.text(eyebrow.toUpperCase(), 190, 18, { align: 'right' })
+  doc.setTextColor(...WHITE)
+  doc.setFontSize(20)
+  doc.text(title, 20, 40)
+}
+
+function panel(doc, x, y, w, h, accent = HAIRLINE) {
+  doc.setDrawColor(...accent)
+  doc.setLineWidth(0.3)
+  doc.roundedRect(x, y, w, h, 2, 2, 'S')
+}
+
+function footer(doc, pageLabel) {
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(7)
+  doc.text('CONFIDENTIAL — PREPARED BY NOVA SYSTEMS', 20, 292)
+  doc.text(pageLabel, 190, 292, { align: 'right' })
+}
+
+// ============================================================ PAGE 1 — LUXURY COVER ==========
+
+function coverPage(doc, audit) {
+  pageFrame(doc)
   doc.setFillColor(...GOLD)
   doc.roundedRect(20, 24, 12, 12, 2, 2, 'F')
   doc.setTextColor(...BLACK)
@@ -52,6 +84,7 @@ function coverPage(doc, audit) {
   doc.setFont('helvetica', 'normal')
   doc.text(`Prepared for ${audit.owner_name || audit.business_name}`, 20, 150)
   doc.text(new Date(audit.created_at || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), 20, 158)
+  doc.text(`${audit.city || ''}${audit.city && audit.industry ? ' · ' : ''}${audit.industry || ''}`, 20, 166)
 
   const circleColor = scoreColor(audit.overall_score)
   doc.setDrawColor(...circleColor)
@@ -64,118 +97,245 @@ function coverPage(doc, audit) {
   doc.setFontSize(8)
   doc.setTextColor(...GRAY)
   doc.text('OVERALL SCORE', 150, 232, { align: 'center' })
+  doc.setTextColor(...circleColor)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.text(audit.score_label || '', 150, 250, { align: 'center', maxWidth: 60 })
 
   doc.setTextColor(...GRAY)
   doc.setFontSize(8)
+  doc.setFont('helvetica', 'normal')
   doc.text('CONFIDENTIAL', 20, 280)
 }
 
-function header(doc, title) {
-  doc.setFillColor(...BLACK)
-  doc.rect(0, 0, 210, 297, 'F')
-  doc.setDrawColor(...GOLD)
-  doc.setLineWidth(0.3)
-  doc.line(20, 24, 190, 24)
-  doc.line(20, 285, 190, 285)
-  doc.setTextColor(...GOLD)
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'bold')
-  doc.text('NOVA SYSTEMS', 20, 18)
-  doc.setTextColor(...WHITE)
-  doc.setFontSize(18)
-  doc.text(title, 20, 40)
-}
+// ============================================================ PAGE 2 — EXECUTIVE SUMMARY ======
 
 function quadrant(doc, x, y, label, score) {
-  doc.setDrawColor(60, 60, 60)
-  doc.roundedRect(x, y, 78, 34, 2, 2, 'S')
+  panel(doc, x, y, 78, 30)
   doc.setTextColor(...GRAY)
   doc.setFontSize(8)
   doc.setFont('helvetica', 'bold')
   doc.text(label.toUpperCase(), x + 6, y + 10)
   doc.setTextColor(...scoreColor(score))
-  doc.setFontSize(20)
-  doc.text(String(score ?? '—'), x + 6, y + 24)
+  doc.setFontSize(18)
+  doc.text(String(score ?? '—'), x + 6, y + 23)
 }
 
 function execSummaryPage(doc, audit) {
-  header(doc, 'Executive Summary')
-  quadrant(doc, 20, 55, 'Website', audit.performance_score)
-  quadrant(doc, 112, 55, 'Online Presence', audit.google_score)
-  quadrant(doc, 20, 95, 'Lead Capture', audit.lead_capture_score)
-  quadrant(doc, 112, 95, 'Competitive Position', audit.competitive_score)
+  header(doc, 'Page 2 of 7', 'Executive Summary')
 
-  let y = 145
-  doc.setTextColor(...RED)
+  quadrant(doc, 20, 50, 'Website', audit.performance_score)
+  quadrant(doc, 112, 50, 'Online Presence', audit.google_score)
+  quadrant(doc, 20, 84, 'Lead Capture', audit.lead_capture_score)
+  quadrant(doc, 112, 84, 'Competitive Position', audit.competitive_score)
+
+  // Compact 10-category scorecard row — the full detail lives in the in-app dashboard; this is
+  // the print-ready summary version so the cover + this page carry the whole score picture.
+  const categories = [
+    ['Brand', audit.brand_score], ['Storefront', audit.storefront_score], ['Social', audit.social_score],
+    ['Cust. Exp.', audit.customer_experience_score], ['AI Readiness', audit.ai_readiness_score],
+  ]
+  let cx = 20
+  const cw = 34
+  categories.forEach(([label, score]) => {
+    panel(doc, cx, 122, cw - 4, 22)
+    doc.setTextColor(...GRAY)
+    doc.setFontSize(6.5)
+    doc.setFont('helvetica', 'bold')
+    doc.text(label.toUpperCase(), cx + 4, 130)
+    doc.setTextColor(...scoreColor(score))
+    doc.setFontSize(14)
+    doc.text(String(score ?? '—'), cx + 4, 140)
+    cx += cw
+  })
+
+  let y = 158
+  doc.setTextColor(...DANGER)
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
   doc.text('TOP FINDINGS', 20, y)
   y += 8
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9)
   const findings = (audit.key_findings || []).slice(0, 3)
   findings.forEach((f) => {
-    doc.setDrawColor(...RED)
-    doc.roundedRect(20, y - 5, 170, 14, 2, 2, 'S')
+    panel(doc, 20, y - 5, 170, 15, DANGER)
     doc.setTextColor(...WHITE)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
     const lines = doc.splitTextToSize(f, 160)
     doc.text(lines, 25, y + 2)
-    y += 18
+    y += 19
   })
 
-  y += 10
+  y += 6
   doc.setTextColor(...GRAY)
   doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
   doc.text('ESTIMATED ANNUAL REVENUE BEING LOST', 20, y)
   doc.setTextColor(...GOLD)
   doc.setFontSize(28)
   doc.setFont('helvetica', 'bold')
   doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 20, y + 14)
+  footer(doc, 'Page 2 of 7')
 }
 
-function categoryGridPage(doc, audit) {
-  header(doc, '10-Category Intelligence Score')
-  const categories = [
-    ['Brand', audit.brand_score],
-    ['Storefront', audit.storefront_score],
-    ['Website', audit.performance_score],
-    ['Google', audit.google_score],
-    ['Social Media', audit.social_score],
-    ['Lead Capture', audit.lead_capture_score],
-    ['Customer Experience', audit.customer_experience_score],
-    ['AI Readiness', audit.ai_readiness_score],
-    ['Revenue Health', Math.max(0, 100 - Math.min(100, Math.round((audit.revenue_leak_monthly || 0) / 100)))],
-    ['Overall Health', audit.overall_score],
-  ]
-  const cols = 2, cardW = 82, cardH = 42, startX = 20, startY = 50, gapX = 8, gapY = 8
-  categories.forEach(([label, score], i) => {
-    const col = i % cols, row = Math.floor(i / cols)
-    const x = startX + col * (cardW + gapX)
-    const y = startY + row * (cardH + gapY)
-    doc.setDrawColor(60, 60, 60)
-    doc.roundedRect(x, y, cardW, cardH, 2, 2, 'S')
-    doc.setTextColor(...GRAY)
-    doc.setFontSize(8)
+// ============================================================ PAGE 3 — REVENUE LEAKS ==========
+
+function revenueLeaksPage(doc, audit) {
+  header(doc, 'Page 3 of 7', 'Revenue Leak Report')
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text('ESTIMATED ANNUAL REVENUE BEING LOST', 20, 55)
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(34)
+  doc.setFont('helvetica', 'bold')
+  doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 20, 74)
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`$${(audit.revenue_leak_monthly || 0).toLocaleString()} per month, ranked by dollar impact`, 20, 82)
+
+  const breakdown = audit.revenue_leak_breakdown || {}
+  const sortedEntries = Object.entries(breakdown).sort((a, b) => Number(b[1]) - Number(a[1]))
+  const maxVal = Math.max(1, ...Object.values(breakdown).map(Number))
+  let y = 100
+  doc.setFontSize(9)
+  sortedEntries.forEach(([key, val]) => {
+    const label = key.replace(/_/g, ' ')
+    doc.setTextColor(...WHITE)
     doc.setFont('helvetica', 'bold')
-    doc.text(label.toUpperCase(), x + 6, y + 12)
-    doc.setTextColor(...scoreColor(score))
-    doc.setFontSize(22)
-    doc.text(String(score ?? '—'), x + 6, y + 30)
-    // color bar
-    doc.setDrawColor(40, 40, 40)
-    doc.roundedRect(x + 6, y + 34, cardW - 12, 3, 1.5, 1.5, 'S')
-    const pct = Math.min(100, Math.max(0, score || 0))
-    if (pct > 0) { doc.setFillColor(...scoreColor(score)); doc.roundedRect(x + 6, y + 34, (cardW - 12) * (pct / 100), 3, 1.5, 1.5, 'F') }
+    doc.text(label.replace(/\b\w/g, (c) => c.toUpperCase()), 20, y)
+    doc.setTextColor(...GRAY)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`$${Number(val).toLocaleString()}/mo`, 130, y)
+    doc.setTextColor(...GOLD)
+    doc.text(`$${(Number(val) * 12).toLocaleString()}/yr`, 165, y)
+    doc.setFillColor(...HAIRLINE)
+    doc.rect(20, y + 3, 150, 2.5, 'F')
+    doc.setFillColor(...GOLD)
+    doc.rect(20, y + 3, 150 * (Number(val) / maxVal), 2.5, 'F')
+    y += 15
   })
+
+  y += 6
+  doc.setDrawColor(...GOLD)
+  doc.setLineWidth(0.3)
+  doc.line(20, y, 190, y)
+  y += 10
+  doc.setTextColor(...WHITE)
+  doc.setFontSize(11)
+  doc.setFont('helvetica', 'bold')
+  doc.text('TOTAL ANNUAL REVENUE LEAK', 20, y)
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(16)
+  doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 150, y)
+  y += 10
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Every leak above is recoverable — see the Growth Plan for how and the timeline.', 20, y)
+  footer(doc, 'Page 3 of 7')
 }
 
-function roadmapPage(doc, audit) {
-  header(doc, 'Priority Roadmap')
+// ============================================================ PAGE 4 — WEBSITE, MARKETING & COMPETITIVE INTEL
+
+function websiteMarketingCompetitivePage(doc, audit) {
+  header(doc, 'Page 4 of 7', 'Website, Marketing & Competitive Intelligence')
+
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.text('WEBSITE', 20, 52)
+  doc.setTextColor(...WHITE)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text(audit.website || 'No website on file', 20, 59)
+  panel(doc, 20, 64, 170, 6)
+  const wPct = Math.min(100, Math.max(0, audit.performance_score || 0))
+  doc.setFillColor(...scoreColor(audit.performance_score))
+  if (wPct > 0) doc.roundedRect(20, 64, 170 * (wPct / 100), 6, 3, 3, 'F')
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(7.5)
+  doc.text(`Mobile performance: ${audit.performance_score ?? '—'}/100`, 20, 76)
+
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.text('GOOGLE & REVIEWS', 20, 90)
+  doc.setTextColor(...WHITE)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`Rating: ${audit.google_rating ?? '—'}  ·  Reviews: ${audit.google_reviews ?? '—'}  ·  Google Score: ${audit.google_score ?? '—'}/100`, 20, 97)
+
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.text('SOCIAL & RESPONSE', 20, 108)
+  doc.setTextColor(...WHITE)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`Social: ${audit.social_score ?? '—'}/100  ·  Phone Response: ${audit.phone_score ?? '—'}/100  ·  Email Response: ${audit.email_score ?? '—'}/100`, 20, 115)
+
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.text('COMPETITOR INTELLIGENCE', 20, 130)
+
+  const competitors = Array.isArray(audit.competitor_data) ? audit.competitor_data : []
+  let y = 140
+  if (!competitors.length) {
+    doc.setTextColor(...GRAY)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.text('No competitor data available for this audit.', 20, y)
+  } else {
+    doc.setFontSize(7.5)
+    const cols = [20, 72, 108, 144, 170]
+    doc.setTextColor(...GRAY)
+    ;['Metric', (audit.business_name || 'You').slice(0, 16), ...competitors.map((c) => (c.name || '').slice(0, 14))].forEach((h, i) => doc.text(h, cols[i] || 20, y))
+    y += 8
+    const metricRows = [
+      ['Rating', audit.google_rating, (c) => c.estimated_google_rating],
+      ['Reviews', audit.google_reviews, (c) => c.review_count],
+      ['Has Website', audit.website ? 'Yes' : 'No', (c) => (c.has_website ? 'Yes' : 'No')],
+      ['Online Booking', 'No', (c) => (c.has_online_booking ? 'Yes' : 'No')],
+      ['Social Score', audit.social_score, (c) => c.social_score],
+    ]
+    doc.setFontSize(8.5)
+    metricRows.forEach(([label, mine, getC]) => {
+      doc.setTextColor(...GRAY)
+      doc.setFont('helvetica', 'normal')
+      doc.text(label, cols[0], y)
+      doc.setTextColor(...WHITE)
+      doc.text(String(mine ?? '—'), cols[1], y)
+      competitors.forEach((c, i) => {
+        doc.setTextColor(...GOLD)
+        doc.text(String(getC(c) ?? '—'), cols[2 + i] || 170, y)
+      })
+      y += 8
+    })
+
+    if (competitors[0]) {
+      y += 6
+      panel(doc, 20, y, 170, 24, GOLD)
+      doc.setTextColor(...GOLD)
+      doc.setFontSize(8.5)
+      const advantages = Array.isArray(competitors[0].advantages) ? competitors[0].advantages.join(', ') : String(competitors[0].advantages || 'a stronger online presence')
+      doc.text(doc.splitTextToSize(`${competitors[0].name} is ahead because of: ${advantages}`, 160), 25, y + 10)
+    }
+  }
+  footer(doc, 'Page 4 of 7')
+}
+
+// ============================================================ PAGE 5 — GROWTH PLAN ============
+
+function growthPlanPage(doc, audit) {
+  header(doc, 'Page 5 of 7', 'Growth Plan')
   const roadmap = audit.priority_roadmap || { fix_today: [], fix_this_month: [], fix_this_quarter: [] }
   const sections = [
-    ['FIX TODAY', GOLD, roadmap.fix_today],
-    ['FIX THIS MONTH — WAVE ONE', GOLD, roadmap.fix_this_month],
-    ['FIX THIS QUARTER — WAVE TWO', GRAY, roadmap.fix_this_quarter],
+    ['IMMEDIATE — FIX TODAY', GOLD, roadmap.fix_today],
+    ['30 DAYS — WAVE ONE', GOLD, roadmap.fix_this_month],
+    ['90 DAYS — WAVE TWO', GRAY, roadmap.fix_this_quarter],
   ]
   let y = 50
   sections.forEach(([title, color, items]) => {
@@ -197,213 +357,108 @@ function roadmapPage(doc, audit) {
       doc.setFontSize(8)
       const impactLines = doc.splitTextToSize(item.impact || '', 160)
       doc.text(impactLines, 25, y)
-      y += impactLines.length * 4.5 + 6
+      y += impactLines.length * 4.5 + 5
     })
-    y += 4
+    y += 3
   })
+  footer(doc, 'Page 5 of 7')
 }
 
-function websitePage(doc, audit) {
-  header(doc, 'Website & Digital Analysis')
-  doc.setTextColor(...WHITE)
-  doc.setFontSize(10)
-  doc.text(audit.website || 'No website on file', 20, 55)
+// ============================================================ PAGE 6 — RECOMMENDED NOVA ENGINES
 
-  doc.setTextColor(...GRAY)
-  doc.setFontSize(9)
-  doc.text('MOBILE PERFORMANCE SCORE', 20, 70)
-  doc.setDrawColor(60, 60, 60)
-  doc.roundedRect(20, 74, 170, 6, 3, 3, 'S')
-  const pct = Math.min(100, Math.max(0, audit.performance_score || 0))
-  doc.setFillColor(...scoreColor(audit.performance_score))
-  if (pct > 0) doc.roundedRect(20, 74, 170 * (pct / 100), 6, 3, 3, 'F')
-
-  const rows = [
-    ['Online Booking', 'No'], ['Live Chat', 'No'], ['Contact Form', audit.website ? 'Likely' : 'No'],
-    ['SSL Certificate', audit.website?.startsWith('https') ? 'Yes' : 'Unknown'], ['Mobile Responsive', audit.performance_score >= 50 ? 'Likely' : 'Unlikely'],
-  ]
-  let y = 95
-  doc.setFontSize(9)
-  rows.forEach(([label, val]) => {
+function recommendedEnginesPage(doc, audit) {
+  header(doc, 'Page 6 of 7', 'Recommended Nova Systems')
+  const recs = Array.isArray(audit.engine_recommendations) ? audit.engine_recommendations : []
+  let y = 52
+  if (!recs.length) {
     doc.setTextColor(...GRAY)
-    doc.text(label, 20, y)
-    doc.setTextColor(...WHITE)
-    doc.text(val, 120, y)
-    y += 9
-  })
-
-  doc.setDrawColor(...GOLD)
-  doc.roundedRect(20, y + 5, 170, 26, 2, 2, 'S')
-  doc.setTextColor(...GOLD)
-  const impact = audit.performance_score != null && audit.performance_score < 70
-    ? `At your current mobile speed you are losing an estimated ${audit.performance_score < 50 ? '53%' : '25%'} of mobile visitors before they see your phone number.`
-    : 'Your website speed is in good shape — focus on conversion features next.'
-  doc.text(doc.splitTextToSize(impact, 160), 25, y + 15)
-}
-
-function responsePage(doc, audit) {
-  header(doc, 'Phone & Email Response Report')
-  doc.setTextColor(...GRAY)
-  doc.setFontSize(9)
-  doc.text('PHONE TEST', 20, 55)
-  doc.setTextColor(...WHITE)
-  doc.setFontSize(10)
-  const phoneResult = audit.phone_test_result
-  doc.text(phoneResult ? `Result: ${JSON.stringify(phoneResult).slice(0, 90)}` : 'No phone number provided.', 20, 63, { maxWidth: 170 })
-  doc.setTextColor(...scoreColor(audit.phone_score))
-  doc.setFontSize(16)
-  doc.text(`Score: ${audit.phone_score ?? '—'}/100`, 20, 78)
-
-  doc.setTextColor(...GRAY)
-  doc.setFontSize(9)
-  doc.text('EMAIL TEST', 20, 100)
-  doc.setTextColor(...WHITE)
-  doc.setFontSize(10)
-  const emailResult = audit.email_test_result
-  doc.text(emailResult ? `Result: ${JSON.stringify(emailResult).slice(0, 90)}` : 'No email address provided.', 20, 108, { maxWidth: 170 })
-  doc.setTextColor(...scoreColor(audit.email_score))
-  doc.setFontSize(16)
-  doc.text(`Score: ${audit.email_score ?? '—'}/100`, 20, 123)
-
-  doc.setDrawColor(...GOLD)
-  doc.roundedRect(20, 145, 170, 26, 2, 2, 'S')
-  doc.setTextColor(...GOLD)
-  doc.setFontSize(9)
-  doc.text('Slow or missed contact is a direct, fixable revenue leak — see the Revenue Leak Breakdown for the dollar impact.', 25, 158, { maxWidth: 160 })
-}
-
-function competitorPage(doc, audit) {
-  header(doc, 'Competitor Intelligence')
-  const competitors = Array.isArray(audit.competitor_data) ? audit.competitor_data : []
-  let y = 55
-  doc.setFontSize(8)
-  doc.setTextColor(...GRAY)
-  const cols = [20, 75, 110, 140, 170]
-  ;['Metric', audit.business_name?.slice(0, 14) || 'You', ...competitors.map((c) => (c.name || '').slice(0, 14))].forEach((h, i) => doc.text(h, cols[i] || 20, y))
-  y += 8
-  const metricRows = [
-    ['Rating', audit.google_rating, (c) => c.estimated_google_rating],
-    ['Reviews', audit.google_reviews, (c) => c.review_count],
-    ['Website', audit.website ? 'Yes' : 'No', (c) => (c.has_website ? 'Yes' : 'No')],
-    ['Booking', 'No', (c) => (c.has_online_booking ? 'Yes' : 'No')],
-    ['Social', audit.social_score, (c) => c.social_score],
-  ]
-  doc.setFontSize(9)
-  metricRows.forEach(([label, mine, getC]) => {
-    doc.setTextColor(...GRAY)
-    doc.text(label, cols[0], y)
-    doc.setTextColor(...WHITE)
-    doc.text(String(mine ?? '—'), cols[1], y)
-    competitors.forEach((c, i) => {
-      doc.setTextColor(...GOLD)
-      doc.text(String(getC(c) ?? '—'), cols[2 + i] || 170, y)
-    })
-    y += 10
-  })
-
-  if (competitors[0]) {
-    y += 10
-    doc.setDrawColor(...GOLD)
-    doc.roundedRect(20, y, 170, 30, 2, 2, 'S')
-    doc.setTextColor(...GOLD)
     doc.setFontSize(9)
-    const advantages = Array.isArray(competitors[0].advantages) ? competitors[0].advantages.join(', ') : String(competitors[0].advantages || 'stronger online presence')
-    doc.text(doc.splitTextToSize(`${competitors[0].name} is ahead because of: ${advantages}`, 160), 25, y + 12)
+    doc.text('No specific engine gaps were flagged for this business.', 20, y)
   }
-}
-
-function revenuePage(doc, audit) {
-  header(doc, 'Revenue Leak Breakdown')
-  doc.setTextColor(...GRAY)
-  doc.setFontSize(9)
-  doc.text('ESTIMATED ANNUAL REVENUE BEING LOST', 20, 55)
-  doc.setTextColor(...GOLD)
-  doc.setFontSize(36)
-  doc.setFont('helvetica', 'bold')
-  doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 20, 75)
-  doc.setTextColor(...GRAY)
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`$${(audit.revenue_leak_monthly || 0).toLocaleString()} per month`, 20, 83)
-
-  const breakdown = audit.revenue_leak_breakdown || {}
-  const sortedEntries = Object.entries(breakdown).sort((a, b) => Number(b[1]) - Number(a[1]))
-  let y = 100
-  doc.setFontSize(9)
-  sortedEntries.forEach(([key, val]) => {
-    const label = key.replace(/_/g, ' ')
-    doc.setTextColor(...GRAY)
-    doc.text(label, 20, y)
-    doc.setTextColor(...WHITE)
-    doc.text(`$${Number(val).toLocaleString()}/mo`, 130, y)
-    doc.setTextColor(...GOLD)
-    doc.text(`$${(Number(val) * 12).toLocaleString()}/yr`, 165, y)
-    const maxVal = Math.max(1, ...Object.values(breakdown).map(Number))
-    doc.setFillColor(...GOLD)
-    doc.rect(20, y + 3, 100 * (Number(val) / maxVal), 3, 'F')
-    y += 13
-  })
-
-  y += 8
-  doc.setDrawColor(...GOLD)
-  doc.setLineWidth(0.3)
-  doc.line(20, y, 190, y)
-  y += 10
-  doc.setTextColor(...WHITE)
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.text('TOTAL ANNUAL REVENUE LEAK', 20, y)
-  doc.setTextColor(...GOLD)
-  doc.setFontSize(16)
-  doc.text(`$${(audit.revenue_leak_annual || 0).toLocaleString()}`, 150, y)
-  y += 12
-  doc.setTextColor(...GRAY)
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
-  doc.text('This is recoverable.', 20, y)
-}
-
-function solutionPage(doc, audit) {
-  header(doc, 'The Solution & Next Steps')
-  const items = [
-    ['Nova Voice', `Fixes missed calls — your phone test scored ${audit.phone_score ?? '—'}/100.`],
-    ['Nova Blue (SMS)', 'Follows up with every lead within minutes, automatically.'],
-    ['Nova Email', `Fixes slow email response — your email test scored ${audit.email_score ?? '—'}/100.`],
-    ['Nova Social', 'Handles every DM and comment so no inquiry goes unanswered.'],
-    ['Nova Revive', 'Reactivates the dead leads already sitting in your database.'],
-    ['Nova Audit + Website', `Fixes the website findings on page 3 — current score ${audit.performance_score ?? '—'}/100.`],
-  ]
-  let y = 55
-  items.forEach(([name, desc]) => {
+  recs.slice(0, 6).forEach((rec) => {
+    const boxH = 32
+    panel(doc, 20, y, 170, boxH)
     doc.setTextColor(...GOLD)
     doc.setFontSize(11)
     doc.setFont('helvetica', 'bold')
-    doc.text(name, 20, y)
+    doc.text(rec.engine, 26, y + 10)
+    if (rec.recovers > 0) {
+      doc.setTextColor(...SUCCESS)
+      doc.setFontSize(9)
+      doc.text(`+$${rec.recovers.toLocaleString()}/mo`, 184, y + 10, { align: 'right' })
+    }
+    doc.setTextColor(...GRAY)
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.text(doc.splitTextToSize(rec.reason, 158), 26, y + 18)
+    doc.setTextColor(...GOLD)
+    doc.setFontSize(7)
+    doc.text('PRICING: INCLUDED IN WAVE ONE   ·   TIMELINE: LIVE AT ONBOARDING', 26, y + 28)
+    y += boxH + 6
+  })
+  footer(doc, 'Page 6 of 7')
+}
+
+// ============================================================ PAGE 7 — NEXT STEPS =============
+
+function nextStepsPage(doc, audit) {
+  header(doc, 'Page 7 of 7', 'Next Steps')
+  doc.setTextColor(...WHITE)
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'normal')
+  doc.text(doc.splitTextToSize(
+    `${audit.business_name || 'This business'} has an estimated $${(audit.revenue_leak_annual || 0).toLocaleString()} in recoverable annual revenue across ${Object.values(audit.revenue_leak_breakdown || {}).filter((v) => v > 0).length} identified gaps. The Growth Plan on page 5 lays out the order of operations; the engines on page 6 are the specific fixes.`,
+    170,
+  ), 20, 55)
+
+  doc.setTextColor(...GOLD)
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.text('ROADMAP SUMMARY', 20, 90)
+  const roadmap = audit.priority_roadmap || {}
+  const counts = [
+    ['Immediate actions', (roadmap.fix_today || []).length],
+    ['30-day actions (Wave One)', (roadmap.fix_this_month || []).length],
+    ['90-day actions (Wave Two)', (roadmap.fix_this_quarter || []).length],
+  ]
+  let y = 100
+  counts.forEach(([label, count]) => {
     doc.setTextColor(...GRAY)
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
-    doc.text(doc.splitTextToSize(desc, 165), 20, y + 7)
-    y += 24
+    doc.text(label, 20, y)
+    doc.setTextColor(...WHITE)
+    doc.setFont('helvetica', 'bold')
+    doc.text(String(count), 170, y, { align: 'right' })
+    y += 9
   })
 
   doc.setFillColor(...GOLD)
-  doc.roundedRect(20, 255, 170, 18, 3, 3, 'F')
+  doc.roundedRect(20, 210, 170, 20, 3, 3, 'F')
   doc.setTextColor(...BLACK)
   doc.setFontSize(11)
   doc.setFont('helvetica', 'bold')
-  doc.text('Book your free strategy meeting — nova-systems.app/welcome', 105, 266, { align: 'center' })
+  doc.text('Schedule your free strategy session — nova-systems.app/welcome', 105, 222, { align: 'center' })
+
+  doc.setDrawColor(...HAIRLINE)
+  doc.setLineWidth(0.3)
+  doc.line(20, 255, 100, 255)
+  doc.setTextColor(...GRAY)
+  doc.setFontSize(8)
+  doc.text('Signature', 20, 261)
+  doc.line(120, 255, 190, 255)
+  doc.text('Date', 120, 261)
+  footer(doc, 'Page 7 of 7')
 }
 
 export function buildAuditPdf(audit) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   coverPage(doc, audit)
   doc.addPage(); execSummaryPage(doc, audit)
-  doc.addPage(); categoryGridPage(doc, audit)
-  doc.addPage(); websitePage(doc, audit)
-  doc.addPage(); responsePage(doc, audit)
-  doc.addPage(); competitorPage(doc, audit)
-  doc.addPage(); revenuePage(doc, audit)
-  doc.addPage(); roadmapPage(doc, audit)
-  doc.addPage(); solutionPage(doc, audit)
+  doc.addPage(); revenueLeaksPage(doc, audit)
+  doc.addPage(); websiteMarketingCompetitivePage(doc, audit)
+  doc.addPage(); growthPlanPage(doc, audit)
+  doc.addPage(); recommendedEnginesPage(doc, audit)
+  doc.addPage(); nextStepsPage(doc, audit)
   return doc.output('datauristring').split(',')[1] // base64
 }

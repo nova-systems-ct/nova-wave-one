@@ -3,7 +3,7 @@ import { sanitize, sanitizeEmail, sanitizePhone, sanitizeUrl } from '../_sanitiz
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { scanWebsite, scanGoogleBusiness, scanWebsiteFeatures, testPhone, testEmail, discoverCompetitors } from './_scans.js'
 import { calculateRevenueLeak, overallScore, scoreLabel, competitiveScore } from './_leak.js'
-import { brandScore, storefrontScore, leadCaptureScore, customerExperienceScore, aiReadinessScore, buildPriorityRoadmap } from './_categories.js'
+import { brandScore, storefrontScore, leadCaptureScore, customerExperienceScore, aiReadinessScore, buildPriorityRoadmap, recommendEngines } from './_categories.js'
 import { buildAuditPdf } from './_pdf.js'
 import { buildPitchDeck } from './_pptx.js'
 
@@ -196,9 +196,14 @@ async function handleRunAudit(req, res) {
   const scoresForFindings = { website: website_score, google: google_score, phone: phone_score ?? 50, social: social_score, leadCapture: lead_capture_score, customerExperience: customer_experience_score }
   const key_findings = buildFindings({ business_name, scores: scoresForFindings, revenueLeak, fcp: websiteScan.fcp, googleBiz, competitors })
 
-  const priority_roadmap = buildPriorityRoadmap({
-    scores: { google: google_score, leadCapture: lead_capture_score, brand: brand_score, phone: phone_score ?? 50, email: email_score ?? 70, website: website_score, social: social_score, storefront: storefront_score, customerExperience: customer_experience_score },
-    revenueLeak, businessName: business_name,
+  const roadmapScores = { google: google_score, leadCapture: lead_capture_score, brand: brand_score, phone: phone_score ?? 50, email: email_score ?? 70, website: website_score, social: social_score, storefront: storefront_score, customerExperience: customer_experience_score }
+  const priority_roadmap = buildPriorityRoadmap({ scores: roadmapScores, revenueLeak, businessName: business_name })
+
+  // Real scores only (no ?? fallbacks) so an engine isn't recommended based on a placeholder —
+  // e.g. phone_score is null (not 50) when no phone number was provided at all.
+  const engine_recommendations = recommendEngines({
+    scores: { google: google_score, leadCapture: lead_capture_score, phone: phone_score, email: email_score, website: website_score, social: social_score, customerExperience: customer_experience_score },
+    revenueLeak, googleRating: google_rating, googleReviews: google_reviews,
   })
 
   const auditRecord = {
@@ -210,7 +215,7 @@ async function handleRunAudit(req, res) {
     overall_score, score_label: scoreLabel(overall_score),
     revenue_leak_monthly: revenueLeak.monthly, revenue_leak_annual: revenueLeak.annual,
     revenue_leak_breakdown: revenueLeak.breakdown,
-    competitor_data: competitors, key_findings, priority_roadmap,
+    competitor_data: competitors, key_findings, priority_roadmap, engine_recommendations,
     phone_test_result: tier === 'full' ? phoneTest : null,
     email_test_result: tier === 'full' ? emailTest : null,
     google_rating, google_reviews,

@@ -107,3 +107,67 @@ export function buildPriorityRoadmap({ scores, revenueLeak, businessName }) {
 
   return { fix_today, fix_this_month, fix_this_quarter }
 }
+
+// Maps audit score gaps to the actual Wave One engines built in this repo (see api/nova-*) —
+// only an engine that addresses a real, measured gap gets recommended, per the "only recommend
+// what the audit found a problem for" rule. Descriptions match each engine's real capability
+// (see the header comment in each api/nova-*/index.js) rather than the platform's full aspirational
+// feature set — e.g. Nova Social is flagged as needing a connected Meta account because that's
+// genuinely required (see api/nova-social/index.js), not glossed over.
+export function recommendEngines({ scores, revenueLeak, googleRating, googleReviews }) {
+  const recs = []
+
+  if (scores.phone != null && scores.phone < 70) {
+    recs.push({
+      engine: 'Nova Voice', recovers: revenueLeak.breakdown.missed_calls,
+      reason: `Your phone test scored ${scores.phone}/100. Nova Voice is an AI phone agent that answers every call, texts back anyone who couldn't get through, and books appointments automatically.`,
+    })
+  }
+  if (scores.email != null && scores.email < 80) {
+    recs.push({
+      engine: 'Nova Email', recovers: revenueLeak.breakdown.lead_capture,
+      reason: `Your email test scored ${scores.email}/100. Nova Email drafts and sends responses to inbound inquiries within minutes, day or night.`,
+    })
+  }
+  if (scores.leadCapture != null && scores.leadCapture < 70) {
+    recs.push({
+      engine: 'Nova Blue (SMS)', recovers: null,
+      reason: 'Contacts across phone, email, and your website form are not being captured consistently. Nova Blue follows up by text within minutes of first contact, automatically.',
+    })
+  }
+  if (scores.social != null && scores.social < 60) {
+    recs.push({
+      engine: 'Nova Social', recovers: revenueLeak.breakdown.social_engagement,
+      reason: 'Your social media presence is thin, so DMs and comments are likely going unanswered. Nova Social answers Instagram and Facebook DMs and comments once your account is connected.',
+    })
+  }
+  if (scores.website == null || scores.website < 70) {
+    recs.push({
+      engine: 'Nova Web', recovers: revenueLeak.breakdown.website_abandonment,
+      reason: scores.website == null
+        ? 'No measurable website performance data is on file. A rebuild focused on speed and conversion turns your site into a lead-generating asset instead of a liability.'
+        : `Your website scored ${scores.website}/100 on mobile performance. A rebuild focused on speed and conversion recovers visitors who leave before they see your phone number.`,
+    })
+  }
+  if ((scores.google != null && scores.google < 70) || (googleRating != null && googleRating < 4.2) || (googleReviews != null && googleReviews < 20)) {
+    recs.push({
+      engine: 'Nova Reviews', recovers: revenueLeak.breakdown.google_visibility,
+      reason: googleRating != null
+        ? `Your Google rating is ${googleRating} across ${googleReviews ?? 0} reviews. Nova Reviews requests a review after every job and flags negative ones before they go public.`
+        : 'Your Google Business profile needs attention. Nova Reviews requests a review after every job and flags negative ones before they go public.',
+    })
+  }
+  if (scores.customerExperience != null && scores.customerExperience < 60) {
+    recs.push({
+      engine: 'Nova Book', recovers: revenueLeak.breakdown.customer_retention,
+      reason: 'No visible booking system was found on your website. Nova Book lets customers self-schedule 24/7 with automatic confirmations and reminders.',
+    })
+  }
+  // These two are standing recommendations rather than score-gated ones — every business with
+  // more than one customer-facing channel benefits from a single pipeline (Nova CRM), and every
+  // business with any history of past leads or customers has some sitting cold (Nova Revive).
+  recs.push({ engine: 'Nova CRM', recovers: null, reason: 'Every contact, call, text, and email from every channel above lands in one pipeline instead of scattered across apps and notebooks.' })
+  recs.push({ engine: 'Nova Revive', recovers: null, reason: 'Reactivates leads and past customers already sitting cold in your database — outreach that would otherwise never happen.' })
+
+  return recs
+}

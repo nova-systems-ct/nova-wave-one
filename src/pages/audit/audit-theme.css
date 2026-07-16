@@ -1,0 +1,51 @@
+/* Nova Audit V2 motion — scoped under .nova-audit-v2 so it never affects other Wave One engines.
+   Transform/opacity only, so it stays cheap regardless of how many cards are on screen. */
+
+.nova-audit-v2 {
+  background: #05070B;
+  min-height: 100%;
+}
+
+.nova-audit-v2 .n-fade-up {
+  animation: nAuditFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.nova-audit-v2 .n-card-hover {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.nova-audit-v2 .n-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  border-color: rgba(255,215,100,0.28);
+}
+
+.nova-audit-v2 .n-shimmer-track {
+  position: relative;
+  overflow: hidden;
+}
+.nova-audit-v2 .n-shimmer-track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(244,208,111,0.35), transparent);
+  transform: translateX(-100%);
+  animation: nAuditShimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes nAuditFadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes nAuditShimmer {
+  100% { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nova-audit-v2 .n-fade-up,
+  .nova-audit-v2 .n-card-hover,
+  .nova-audit-v2 .n-shimmer-track::after {
+    animation: none;
+    transition: none;
+  }
+}
