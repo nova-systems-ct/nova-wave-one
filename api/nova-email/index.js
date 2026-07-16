@@ -7,6 +7,7 @@ import {
   passesContentFilter, isLowConfidence, alertIsaac, alertHotLeadReply, reportEngineError, personalize,
 } from '../_automation.js'
 import { logEnvCheck } from '../_envCheck.js'
+import { logEngineActivity } from '../_integrations.js'
 
 const CATEGORIES = ['Important', 'Client', 'Lead', 'Spam', 'Automated']
 const FROM_ADDRESS = 'hello@nova-systems.app'
@@ -67,6 +68,7 @@ async function handleSendEmail(req, res) {
   try {
     const data = await sendViaResend({ to, subject, html, from_name })
     await logEmail({ direction: 'outbound', from_email: FROM_ADDRESS, to_email: to, subject, body: html, sent: true })
+    await logEngineActivity({ email: to, engine: 'email', direction: 'outbound', summary: subject, source: 'email' })
     return res.status(200).json({ success: true, email_id: data.id })
   } catch (err) {
     await reportEngineError('Nova Email', 'send_email', to, err)
@@ -178,6 +180,7 @@ async function handleGenerateReply(req, res) {
     ai_draft: draft_reply, confidence_score, needs_review, auto_send, sent: false,
     status: needs_review ? 'needs_review' : 'auto_responded',
   })
+  if (sender_email) await logEngineActivity({ email: sender_email, engine: 'email', direction: 'inbound', summary: subject || email_thread.slice(0, 200), source: 'email' })
 
   return res.status(200).json({ draft_reply: draft_reply || '', confidence_score, needs_review, auto_send })
 }
@@ -221,6 +224,7 @@ async function handleProcessInbound(req, res) {
   const status = needs_review ? 'needs_review' : 'auto_responded'
 
   await logEmail({ direction: 'inbound', from_email, to_email, subject, body, category, ai_draft: draft, sent: status === 'auto_responded', confidence_score: confidence, needs_review, auto_send: !needs_review, status })
+  if (from_email) await logEngineActivity({ email: from_email, engine: 'email', direction: 'inbound', summary: subject || body.slice(0, 200), source: 'email' })
 
   if (status === 'auto_responded' && draft && from_email) {
     const passed = await passesContentFilter(draft, { engine: 'Nova Email', contactLabel: from_email })
@@ -305,6 +309,7 @@ async function handleApproveSend(req, res) {
     if (id && isSupabaseConfigured()) {
       await supabaseFetch(`nova_ai_email_logs?id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ sent: true, needs_review: false, status: 'auto_responded' }) }).catch(() => {})
     }
+    await logEngineActivity({ email: to, engine: 'email', direction: 'outbound', summary: subject, source: 'email' })
     return res.status(200).json({ success: true, email_id: data.id })
   } catch (err) {
     await reportEngineError('Nova Email', 'approve_send', to, err)

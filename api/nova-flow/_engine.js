@@ -3,11 +3,13 @@
 // knows how to run a workflow.
 //
 // Serverless constraint: Vercel functions have a hard execution ceiling (60s, see vercel.json).
-// A `wait` step meaning "pause 24 hours, then continue" cannot literally block inside one
-// invocation. Each `run_trigger` call executes every action in the matched workflow(s)
-// immediately and logs `wait` steps as recorded-but-not-delayed — the run history makes this
-// visible rather than silently pretending a real delay happened. A future iteration could re-
-// queue the remaining steps via another cron tick; that's out of scope for this pass.
+// A `wait` step meaning "pause N hours, then continue" cannot literally block inside one
+// invocation. Instead, hitting a `wait` step saves the *remaining* actions + a real resume_at
+// timestamp to nova_flow_pending_steps and stops this invocation there; the
+// `process_pending_steps` cron (registered in vercel.json) picks up anything due and resumes it,
+// which may itself hit another `wait` and hand off again. This is a real delay across
+// invocations, not a single blocking sleep — but it is genuinely delayed rather than logged-and-
+// skipped as before.
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { alertIsaac, personalize } from '../_automation.js'
 
@@ -102,9 +104,6 @@ async function runAction(action, contact) {
     case 'send_notification_to_isaac':
       await alertIsaac(personalize(action.message || 'Nova Flow: workflow step reached.', tokens)).catch(() => {})
       return { notified: true }
-    case 'wait':
-      // See file header — not a real delay in this pass, just recorded in the run log.
-      return { waited_hours_requested: action.hours || 0, note: 'not a real delay in this build — see api/nova-flow/_engine.js' }
     case 'run_audit':
       return { skipped: true, reason: 'run_audit from a workflow requires business_name/city/industry — trigger Nova Audit directly for now' }
     case 'generate_proposal':
@@ -112,6 +111,36 @@ async function runAction(action, contact) {
     default:
       return { skipped: true, reason: `unknown action type "${action.type}"` }
   }
+}
+
+// Runs `actions` in order starting at `startIndex`. Hitting a `wait` step persists the
+// remaining actions + a real resume_at timestamp to nova_flow_pending_steps and stops here
+// (paused: true) instead of continuing immediately — see the file header for why.
+async function runActions(actions, contact, run_id, startIndex = 0) {
+  const results = []
+  const list = Array.isArray(actions) ? actions : []
+  for (let i = startIndex; i < list.length; i++) {
+    const action = list[i]
+    if (action.type === 'wait') {
+      const hours = Number(action.hours) || 0
+      const resume_at = new Date(Date.now() + hours * 3600000).toISOString()
+      if (isSupabaseConfigured()) {
+        await supabaseFetch('nova_flow_pending_steps', {
+          method: 'POST', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ run_id, contact_snapshot: contact || null, remaining_actions: list.slice(i + 1), resume_at, status: 'pending' }),
+        }).catch((err) => console.error('[nova-flow] Failed to queue pending steps for wait:', err.message))
+      }
+      results.push({ action: 'wait', queued_until: resume_at })
+      return { results, paused: true }
+    }
+    try {
+      results.push({ action: action.type, ...(await runAction(action, contact)) })
+    } catch (err) {
+      console.error(`[nova-flow] Action "${action.type}" failed:`, err.message)
+      results.push({ action: action.type, error: err.message })
+    }
+  }
+  return { results, paused: false }
 }
 
 export async function runTrigger(trigger_type, contact) {
@@ -129,20 +158,12 @@ export async function runTrigger(trigger_type, contact) {
     })
     const run = runRes.ok ? (await runRes.json())[0] : null
 
-    const results = []
-    for (const action of Array.isArray(workflow.actions) ? workflow.actions : []) {
-      try {
-        results.push({ action: action.type, ...(await runAction(action, contact)) })
-      } catch (err) {
-        console.error(`[nova-flow] Action "${action.type}" in workflow "${workflow.name}" failed:`, err.message)
-        results.push({ action: action.type, error: err.message })
-      }
-    }
+    const { paused } = await runActions(workflow.actions, contact, run?.id)
 
     if (run) {
       await supabaseFetch(`nova_flow_runs?id=eq.${run.id}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString() }),
+        body: JSON.stringify({ status: paused ? 'waiting' : 'completed', completed_at: paused ? null : new Date().toISOString() }),
       }).catch(() => {})
     }
     await supabaseFetch(`nova_flow_workflows?id=eq.${workflow.id}`, {
@@ -153,4 +174,29 @@ export async function runTrigger(trigger_type, contact) {
     ran++
   }
   return { ran }
+}
+
+// Cron entry point — finds every pending step whose resume_at has passed and resumes it. A
+// resumed segment may itself hit another `wait`, which hands off to a fresh pending-steps row;
+// either way this row's job is done once processed, so it's always marked completed here.
+export async function processPendingSteps() {
+  if (!isSupabaseConfigured()) return { processed: 0 }
+  const now = new Date().toISOString()
+  const r = await supabaseFetch(`nova_flow_pending_steps?status=eq.pending&resume_at=lte.${encodeURIComponent(now)}&limit=50`)
+  const due = r.ok ? await r.json() : []
+
+  let processed = 0
+  for (const step of due) {
+    await supabaseFetch(`nova_flow_pending_steps?id=eq.${step.id}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'processing' }),
+    }).catch(() => {})
+
+    await runActions(step.remaining_actions || [], step.contact_snapshot, step.run_id)
+
+    await supabaseFetch(`nova_flow_pending_steps?id=eq.${step.id}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'completed' }),
+    }).catch(() => {})
+    processed++
+  }
+  return { processed }
 }

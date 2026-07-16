@@ -5,6 +5,7 @@ import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { logEnvCheck } from '../_envCheck.js'
 import { callClaude } from '../_agents.js'
 import { alertIsaac } from '../_automation.js'
+import { logEngineActivity } from '../_integrations.js'
 
 // ============================================================ ACTION: fetch_reviews ==========
 
@@ -111,6 +112,7 @@ async function handleRequestReview(req, res) {
   })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) return res.status(500).json({ error: data?.message || 'Send failed' })
+  await logEngineActivity({ phone, engine: 'reviews', direction: 'outbound', summary: 'Requested a review', source: 'reviews' })
   return res.status(200).json({ ok: true, message_sid: data.sid })
 }
 

@@ -113,7 +113,10 @@ export async function onMeetingBooked(contact_id, meeting_data = {}) {
   }
 }
 
-// Called by Nova Finances when a Stripe payment webhook confirms an invoice was paid.
+// Called by Nova Finances when a Stripe payment webhook confirms an invoice was paid. This is
+// the one real, measured contribution to a contact's lifetime_value in Nova Memory — every other
+// engine reads lifetime_value before acting (e.g. Nova CRM's referral-candidate query, Nova
+// Client's portal) but only a real payment is allowed to increase it.
 export async function onPaymentReceived(contact_id, amount) {
   if (!isSupabaseConfigured()) return
   try {
@@ -123,11 +126,30 @@ export async function onPaymentReceived(contact_id, amount) {
         body: JSON.stringify({ status: 'active_client', updated_at: new Date().toISOString() }),
       })
       await onInteraction(contact_id, 'finances', 'inbound', `Payment received: $${Number(amount || 0).toLocaleString()}`, 'paid')
+      await updateMemory({ contactId: contact_id }, { incrementLifetimeValue: Number(amount) || 0 })
     }
     await fireFlow('payment_received', contact_id ? { id: contact_id } : null)
     await alertIsaac(`Nova Finances: payment received — $${Number(amount || 0).toLocaleString()}. Check dashboard.`).catch(() => {})
   } catch (err) {
     console.error('[integrations:onPaymentReceived] Failed:', err.message)
+  }
+}
+
+// Convenience for engines that only ever see a phone/email, not a CRM contact_id (Nova SMS,
+// Nova Email, Nova Voice, Nova Reviews) — resolves the matching contact (creating a minimal one
+// if genuinely new, same as onNewContact) then logs the interaction. This is what makes CRM's
+// activity timeline and Nova Memory populate from every real customer touchpoint automatically,
+// instead of only from the engines that already looked up a contact_id themselves.
+export async function logEngineActivity({ phone, email, engine, direction, summary, outcome, source }) {
+  if (!isSupabaseConfigured() || (!phone && !email)) return null
+  try {
+    let contact = await findContactByPhoneOrEmail(phone, email)
+    if (!contact) contact = await onNewContact({ phone, email, source: source || engine })
+    if (contact) await onInteraction(contact.id, engine, direction, summary, outcome)
+    return contact
+  } catch (err) {
+    console.error('[integrations:logEngineActivity] Failed:', err.message)
+    return null
   }
 }
 

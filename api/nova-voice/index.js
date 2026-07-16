@@ -4,6 +4,7 @@ import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { loadAgentById } from '../_agents.js'
 import { alertIsaac, reportEngineError } from '../_automation.js'
 import { logEnvCheck } from '../_envCheck.js'
+import { logEngineActivity } from '../_integrations.js'
 
 function toE164(phone) {
   const digits = String(phone || '').replace(/[^0-9]/g, '')
@@ -87,6 +88,7 @@ async function handleMakeCall(req, res) {
         body: JSON.stringify({ agent_id, caller_phone: to, call_sid: data.sid, direction: 'outbound', outcome: 'pending' }),
       }).catch((err) => console.error('[nova-voice:make_call] Log failed (non-fatal):', err.message))
     }
+    await logEngineActivity({ phone: to, engine: 'voice', direction: 'outbound', summary: `Placed a ${call_purpose} call`, source: 'voice' })
 
     return res.status(200).json({ call_sid: data.sid, status: data.status, agent_name: agent.agent_name })
   } catch (err) {
@@ -127,6 +129,9 @@ async function handleCallCompleted(req, res) {
     if (['no-answer', 'busy', 'failed'].includes(CallStatus)) {
       const phone = call?.caller_phone || 'a caller'
       await alertIsaac(`Missed call alert: ${phone} did not answer the Nova AI call. Consider following up via SMS.`).catch(() => {})
+    }
+    if (call?.caller_phone) {
+      await logEngineActivity({ phone: call.caller_phone, engine: 'voice', direction: call.direction || 'outbound', summary: `Call ${CallStatus}${CallDuration ? ` (${CallDuration}s)` : ''}`, outcome: CallStatus, source: 'voice' })
     }
   } catch (err) {
     console.error('[nova-voice:call_completed] Failed:', err.message)

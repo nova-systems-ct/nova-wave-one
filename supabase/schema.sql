@@ -312,6 +312,13 @@ CREATE TABLE IF NOT EXISTS nova_tron_trends (
   alerts JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Additional real signal categories so Tron (Intelligence) can fan out to every engine, not just
+-- Media/Isaac's morning brief — see api/nova-tron/index.js and api/_recommendations.js.
+ALTER TABLE nova_tron_trends ADD COLUMN IF NOT EXISTS pricing_signals JSONB;
+ALTER TABLE nova_tron_trends ADD COLUMN IF NOT EXISTS compliance_signals JSONB;
+ALTER TABLE nova_tron_trends ADD COLUMN IF NOT EXISTS reputation_signals JSONB;
+ALTER TABLE nova_tron_trends ADD COLUMN IF NOT EXISTS seasonal_demand_signals JSONB;
+ALTER TABLE nova_tron_trends ADD COLUMN IF NOT EXISTS reactivation_opportunities JSONB;
 
 -- ── Nova Social — scheduled post publishing (in addition to the existing DM/comment log). ──
 
@@ -460,3 +467,69 @@ CREATE TABLE IF NOT EXISTS nova_tax_calendar (
   reminder_sent BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ============================================================================================
+-- WAVE ONE — FOUNDATIONAL CROSS-ENGINE LAYER ("no engine is an island")
+-- Shared primitives every engine uses: recommendations, tasks, and Flow's real delayed-step
+-- queue. Safe to run multiple times — every statement below is idempotent.
+-- ============================================================================================
+
+-- ── Nova Recommendations — any engine can surface a real, actionable finding to any other. ──
+-- Every row must have a `resolution` (automation/task/content/crm_update/notify) — enforced in
+-- code (api/_recommendations.js), not just here — so a recommendation can never be "just stored
+-- and displayed," per the governing rule.
+
+CREATE TABLE IF NOT EXISTS nova_recommendations (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  engine TEXT,
+  source_engines TEXT[],
+  message TEXT,
+  recommended_action TEXT,
+  estimated_value NUMERIC,
+  is_measured BOOLEAN DEFAULT FALSE,
+  confidence NUMERIC,
+  evidence JSONB,
+  resolution TEXT,
+  contact_id UUID,
+  status TEXT DEFAULT 'open',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS nova_recommendations_engine_idx ON nova_recommendations (engine);
+CREATE INDEX IF NOT EXISTS nova_recommendations_status_idx ON nova_recommendations (status);
+
+-- ── Nova Tasks — approve-to-execute primitive layered on Nova Flow. ─────────────────────────
+
+CREATE TABLE IF NOT EXISTS nova_tasks (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  engine TEXT,
+  title TEXT,
+  description TEXT,
+  contact_id UUID,
+  source_recommendation_id UUID,
+  assigned_to TEXT,
+  trigger_type TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS nova_tasks_status_idx ON nova_tasks (status);
+CREATE INDEX IF NOT EXISTS nova_tasks_contact_idx ON nova_tasks (contact_id);
+
+-- ── Nova Flow — real delayed-step queue, fixing `wait` (previously logged but never delayed). ─
+-- When a workflow hits a `wait` step, the remaining actions are saved here with a real
+-- resume_at timestamp instead of continuing immediately; a cron picks them back up.
+
+CREATE TABLE IF NOT EXISTS nova_flow_pending_steps (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  run_id UUID,
+  contact_snapshot JSONB,
+  remaining_actions JSONB,
+  resume_at TIMESTAMPTZ,
+  status TEXT DEFAULT 'pending',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS nova_flow_pending_steps_status_idx ON nova_flow_pending_steps (status, resume_at);
+
+-- ── Nova Memory — lifetime value, so "One AI Memory" includes real spend history. ───────────
+ALTER TABLE nova_memory ADD COLUMN IF NOT EXISTS lifetime_value NUMERIC DEFAULT 0;

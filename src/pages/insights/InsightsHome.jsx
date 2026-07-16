@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { LineChart as LineChartIcon, AlertTriangle, RefreshCcw, FileText } from 'lucide-react'
+import { LineChart as LineChartIcon, AlertTriangle, RefreshCcw, FileText, Sparkles, Check, X } from 'lucide-react'
 import DashboardShell from '../../components/DashboardShell'
 import { InsightsAPI } from '../../lib/api'
 import { supabase } from '../../lib/supabase'
@@ -14,6 +14,9 @@ export default function InsightsHome() {
   const [chartData, setChartData] = useState([])
   const [archive, setArchive] = useState([])
   const [loading, setLoading] = useState(true)
+  const [recommendations, setRecommendations] = useState([])
+  const [tasks, setTasks] = useState([])
+  const [busyId, setBusyId] = useState('')
 
   const loadBriefing = async () => {
     if (!supabase) return
@@ -41,9 +44,27 @@ export default function InsightsHome() {
     }))
   }
 
+  const loadMissionControl = async () => {
+    await Promise.all([
+      InsightsAPI.getRecommendations().then(setRecommendations).catch(() => setRecommendations([])),
+      InsightsAPI.getTasks().then(setTasks).catch(() => setTasks([])),
+    ])
+  }
+
   useEffect(() => {
-    Promise.all([loadBriefing(), loadArchive(), loadChart(), InsightsAPI.getAnomalies().then(setAnomalies).catch(() => {})]).finally(() => setLoading(false))
+    Promise.all([loadBriefing(), loadArchive(), loadChart(), loadMissionControl(), InsightsAPI.getAnomalies().then(setAnomalies).catch(() => {})]).finally(() => setLoading(false))
   }, [])
+
+  const doApprove = async (id) => {
+    setBusyId(id)
+    try { await InsightsAPI.approveTask(id); await loadMissionControl() } catch { /* non-fatal */ }
+    setBusyId('')
+  }
+  const doDismiss = async (id) => {
+    setBusyId(id)
+    try { await InsightsAPI.dismissTask(id); await loadMissionControl() } catch { /* non-fatal */ }
+    setBusyId('')
+  }
 
   const generate = async () => {
     setGenerating(true)
@@ -75,6 +96,46 @@ export default function InsightsHome() {
           </>
         ) : (
           <p className="text-sm" style={{ color: '#666666' }}>No briefing yet — click Regenerate to have Claude write today's.</p>
+        )}
+      </div>
+
+      {/* MISSION CONTROL — every recommendation/task from every engine, no exceptions */}
+      <div className="rounded-xl p-6 mb-6" style={{ background: '#0E0E0E', border: '1px solid #2A2A2A' }}>
+        <p className="text-xs font-bold tracking-[0.15em] uppercase mb-4" style={{ color: GOLD }}>
+          <Sparkles className="w-3.5 h-3.5 inline mr-1.5" />Mission Control — Cross-Engine Recommendations
+        </p>
+        {recommendations.length === 0 && tasks.length === 0 ? (
+          <p className="text-sm" style={{ color: '#666666' }}>No open recommendations or tasks from other engines right now.</p>
+        ) : (
+          <div className="space-y-3">
+            {tasks.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-4 rounded-lg px-4 py-3" style={{ background: '#141414', border: '1px solid #2A2A2A' }}>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.08em] mb-1" style={{ color: GOLD }}>{t.engine}</p>
+                  <p className="text-sm font-semibold" style={{ color: '#fff' }}>{t.title}</p>
+                  {t.description && <p className="text-xs mt-1" style={{ color: '#999999' }}>{t.description}</p>}
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button onClick={() => doApprove(t.id)} disabled={busyId === t.id} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#4ade8020', border: '1px solid #4ade8050' }}>
+                    <Check className="w-4 h-4" style={{ color: '#4ade80' }} />
+                  </button>
+                  <button onClick={() => doDismiss(t.id)} disabled={busyId === t.id} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#f8717120', border: '1px solid #f8717150' }}>
+                    <X className="w-4 h-4" style={{ color: '#f87171' }} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {recommendations.filter((r) => r.resolution !== 'task').map((r) => (
+              <div key={r.id} className="rounded-lg px-4 py-3" style={{ background: '#141414', border: '1px solid #2A2A2A' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: GOLD }}>{r.engine}{r.source_engines?.length ? ` · via ${r.source_engines.join(', ')}` : ''}</p>
+                  {r.estimated_value > 0 && <span className="text-xs font-bold" style={{ color: r.is_measured ? '#4ade80' : '#999999' }}>{r.is_measured ? 'Measured' : 'Est.'} ${Number(r.estimated_value).toLocaleString()}</span>}
+                </div>
+                <p className="text-sm" style={{ color: '#eee' }}>{r.message}</p>
+                <p className="text-xs mt-1" style={{ color: '#999999' }}>{r.recommended_action}</p>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

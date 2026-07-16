@@ -42,6 +42,8 @@ export async function getPreferredLanguage({ contactId, phone, email } = {}, fal
 //   special_notes — overwritten if provided.
 //   topics_discussed — appended (deduped) rather than overwritten, so history accumulates.
 //   incrementAppointments — bumps appointment_count by 1 when true.
+//   incrementLifetimeValue — adds a real dollar amount to lifetime_value (called on real
+//   payments only — see _integrations.js:onPaymentReceived — never an estimate).
 //   respondedOk — used to recompute a simple rolling response_rate (see below).
 export async function updateMemory({ contactId, phone, email }, patch = {}) {
   if (!isSupabaseConfigured() || (!contactId && !phone && !email)) return null
@@ -65,6 +67,7 @@ export async function updateMemory({ contactId, phone, email }, patch = {}) {
     if (patch.special_notes) body.special_notes = patch.special_notes
     if (nextTopics.length) body.topics_discussed = nextTopics
     if (patch.incrementAppointments) body.appointment_count = (existing?.appointment_count || 0) + 1
+    if (patch.incrementLifetimeValue) body.lifetime_value = Number(existing?.lifetime_value || 0) + Number(patch.incrementLifetimeValue)
     if (typeof patch.respondedOk === 'boolean') {
       // Simple exponential moving average so one bad/good interaction doesn't swing it wildly.
       const prev = existing?.response_rate ?? 50

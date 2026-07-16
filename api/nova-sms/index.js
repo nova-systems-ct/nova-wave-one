@@ -10,6 +10,7 @@ import {
   passesContentFilter, alertHotLeadReply, reportEngineError, personalize,
 } from '../_automation.js'
 import { logEnvCheck } from '../_envCheck.js'
+import { logEngineActivity } from '../_integrations.js'
 
 const SMS_CHANNEL_INSTRUCTIONS = 'You are texting with someone over SMS. Always be helpful, friendly, and concise. Keep replies under 160 characters when possible.'
 const WHATSAPP_CHANNEL_INSTRUCTIONS = 'You are messaging with someone over WhatsApp. Always be helpful, friendly, and concise. Keep replies under 200 characters when possible.'
@@ -73,6 +74,7 @@ async function handleSendSms(req, res) {
   try {
     const data = await sendTwilioMessage({ to, from: TWILIO_PHONE_NUMBER, body: message })
     await logMessage({ agent_id, contact_phone: to, direction: 'outbound', message, message_sid: data.sid, platform: 'sms' })
+    await logEngineActivity({ phone: to, engine: 'sms', direction: 'outbound', summary: message, source: 'sms' })
     return res.status(200).json({ success: true, message_sid: data.sid, to })
   } catch (err) {
     await reportEngineError('Nova Blue SMS', 'send_sms', to, err)
@@ -104,6 +106,7 @@ async function handleReceiveInbound(req, res, { whatsapp }) {
 
   const agent = await loadAgentByPhone(ourNumber)
   await logMessage({ agent_id: agent?.id, contact_phone: contactPhone, direction: 'inbound', message: body, platform: whatsapp ? 'whatsapp' : 'sms' })
+  await logEngineActivity({ phone: contactPhone, engine: whatsapp ? 'whatsapp' : 'sms', direction: 'inbound', summary: body, source: whatsapp ? 'whatsapp' : 'sms' })
 
   // STOP / opt-out — highest priority, always honored, no AI reply generated for it.
   if (isStopMessage(body)) {
@@ -131,6 +134,7 @@ async function handleReceiveInbound(req, res, { whatsapp }) {
   const outboundText = passed ? finalReply : 'Thanks for reaching out — someone from our team will follow up with you shortly.'
 
   await logMessage({ agent_id: agent.id, contact_phone: contactPhone, direction: 'outbound', message: outboundText, platform: whatsapp ? 'whatsapp' : 'sms' })
+  await logEngineActivity({ phone: contactPhone, engine: whatsapp ? 'whatsapp' : 'sms', direction: 'outbound', summary: outboundText, source: whatsapp ? 'whatsapp' : 'sms' })
   return res.status(200).send(messagingTwiml(outboundText))
 }
 
@@ -281,6 +285,7 @@ async function handleSendWhatsapp(req, res) {
   try {
     const data = await sendTwilioMessage({ to: toWhatsApp(to), from: toWhatsApp(TWILIO_PHONE_NUMBER), body: message })
     await logMessage({ agent_id, contact_phone: to, direction: 'outbound', message, message_sid: data.sid, platform: 'whatsapp' })
+    await logEngineActivity({ phone: to, engine: 'whatsapp', direction: 'outbound', summary: message, source: 'whatsapp' })
     return res.status(200).json({ success: true, message_sid: data.sid })
   } catch (err) {
     await reportEngineError('Nova WhatsApp', 'send_whatsapp', to, err)

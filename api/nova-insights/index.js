@@ -4,6 +4,8 @@ import { setCors } from '../_cors.js'
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { logEnvCheck } from '../_envCheck.js'
 import { alertIsaac } from '../_automation.js'
+import { getOpenRecommendations } from '../_recommendations.js'
+import { getOpenTasks, approveTask, dismissTask } from '../_tasks.js'
 
 let _anthropic = null
 async function claude() {
@@ -167,6 +169,82 @@ async function handleGenerateWeeklyReport(req, res) {
   return res.status(200).json({ ok: true, report_text, stats })
 }
 
+// ============================================================ MISSION CONTROL ===============
+// Every recommendation/task from every engine surfaces here without exception — this is what
+// makes Nova Insights "Mission Control" rather than just a reporting dashboard.
+
+async function handleGetRecommendations(req, res) {
+  const engine = typeof req.query?.engine === 'string' ? req.query.engine : undefined
+  const recs = await getOpenRecommendations({ engine })
+  return res.status(200).json(recs)
+}
+
+async function handleGetTasks(req, res) {
+  const engine = typeof req.query?.engine === 'string' ? req.query.engine : undefined
+  const tasks = await getOpenTasks({ engine })
+  return res.status(200).json(tasks)
+}
+
+async function handleApproveTask(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  const id = req.body?.id
+  if (!id) return res.status(400).json({ error: 'id is required' })
+  const result = await approveTask(id)
+  return res.status(200).json(result)
+}
+
+async function handleDismissTask(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  const id = req.body?.id
+  if (!id) return res.status(400).json({ error: 'id is required' })
+  const result = await dismissTask(id)
+  return res.status(200).json(result)
+}
+
+// ============================================================ ACTION: generate_opportunity_feed
+// Daily cron (see vercel.json) — real cross-engine opportunities, not a report. Aggregates the
+// last 24h of open recommendations from every engine (hiring signals, new reviews, lost
+// customers, competitor/SEO/trend signals, tax deadlines — whatever engines actually surfaced)
+// and asks Claude to rank/summarize them into a short actionable feed, saved alongside the daily
+// briefing so it shows up in the same place Isaac already checks every morning.
+
+async function handleGenerateOpportunityFeed(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  const recs = await getOpenRecommendations({ limit: 100 })
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000
+  const recent = recs.filter((r) => new Date(r.created_at).getTime() >= dayAgo)
+
+  let feed_text = null
+  const client = await claude()
+  if (client && recent.length) {
+    try {
+      const msg = await client.messages.create({
+        model: 'claude-sonnet-4-5', max_tokens: 500, temperature: 0.4,
+        system: 'You are Nova Insights, Mission Control for Nova Systems. You are given real open recommendations surfaced by other engines in the last 24 hours (hiring signals, reviews, lost customers, market/competitor signals, tax deadlines, etc). Rank them by estimated value/urgency and write a short opportunity feed — 3-6 items, one line each, most important first. Be concrete and cite the engine each came from. Under 150 words total.',
+        messages: [{ role: 'user', content: JSON.stringify(recent.map((r) => ({ engine: r.engine, message: r.message, action: r.recommended_action, estimated_value: r.estimated_value, is_measured: r.is_measured }))) }],
+      })
+      feed_text = msg.content?.[0]?.text?.trim() || null
+    } catch (err) {
+      console.error('[nova-insights:generate_opportunity_feed] Claude call failed:', err.message)
+    }
+  }
+  if (!feed_text) {
+    feed_text = recent.length
+      ? `${recent.length} open opportunities from other engines: ${recent.slice(0, 5).map((r) => `[${r.engine}] ${r.recommended_action}`).join('; ')}`
+      : 'No new cross-engine opportunities in the last 24 hours.'
+  }
+
+  if (isSupabaseConfigured()) {
+    await supabaseFetch('nova_insights_briefings', {
+      method: 'POST', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ briefing_text: feed_text, briefing_type: 'opportunity_feed', stats_snapshot: { recommendation_count: recent.length } }),
+    }).catch(() => {})
+  }
+  if (recent.length) await alertIsaac(`Nova Opportunity Feed: ${feed_text.slice(0, 300)}${feed_text.length > 300 ? '…' : ''}`).catch(() => {})
+
+  return res.status(200).json({ ok: true, feed_text, opportunity_count: recent.length })
+}
+
 // ================================================================================= router ==
 
 export default async function handler(req, res) {
@@ -176,10 +254,15 @@ export default async function handler(req, res) {
     const action = typeof req.query?.action === 'string' ? req.query.action : ''
 
     switch (action) {
-      case 'generate_briefing':       return await handleGenerateBriefing(req, res)
-      case 'get_stats':               return await handleGetStats(req, res)
-      case 'get_anomalies':           return await handleGetAnomalies(req, res)
-      case 'generate_weekly_report':  return await handleGenerateWeeklyReport(req, res)
+      case 'generate_briefing':         return await handleGenerateBriefing(req, res)
+      case 'get_stats':                 return await handleGetStats(req, res)
+      case 'get_anomalies':             return await handleGetAnomalies(req, res)
+      case 'generate_weekly_report':    return await handleGenerateWeeklyReport(req, res)
+      case 'get_recommendations':       return await handleGetRecommendations(req, res)
+      case 'get_tasks':                 return await handleGetTasks(req, res)
+      case 'approve_task':              return await handleApproveTask(req, res)
+      case 'dismiss_task':              return await handleDismissTask(req, res)
+      case 'generate_opportunity_feed': return await handleGenerateOpportunityFeed(req, res)
       default:
         return res.status(400).json({ error: `Unknown action: ${action}` })
     }

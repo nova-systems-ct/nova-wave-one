@@ -111,6 +111,11 @@ export const InsightsAPI = {
   getStats: () => api.get('/api/nova-insights', { action: 'get_stats' }),
   getAnomalies: () => api.get('/api/nova-insights', { action: 'get_anomalies' }),
   generateWeeklyReport: () => api.post('/api/nova-insights?action=generate_weekly_report', {}),
+  getRecommendations: (params) => api.get('/api/nova-insights', { action: 'get_recommendations', ...params }),
+  getTasks: (params) => api.get('/api/nova-insights', { action: 'get_tasks', ...params }),
+  approveTask: (id) => api.post('/api/nova-insights?action=approve_task', { id }),
+  dismissTask: (id) => api.post('/api/nova-insights?action=dismiss_task', { id }),
+  generateOpportunityFeed: () => api.post('/api/nova-insights?action=generate_opportunity_feed', {}),
 }
 
 export const BookAPI = {

@@ -2,7 +2,7 @@ import { setCors } from '../_cors.js'
 import { sanitize } from '../_sanitize.js'
 import { supabaseFetch, isSupabaseConfigured } from '../_supabaseAdmin.js'
 import { logEnvCheck } from '../_envCheck.js'
-import { ensureDefaultWorkflows, runTrigger } from './_engine.js'
+import { ensureDefaultWorkflows, runTrigger, processPendingSteps } from './_engine.js'
 
 const TRIGGER_TYPES = ['new_lead', 'audit_complete', 'meeting_booked', 'meeting_cancelled', 'no_show', 'payment_received', 'review_received', 'lead_went_cold', 'client_churned', 'manual']
 const ACTION_TYPES = ['send_sms', 'send_email', 'send_whatsapp', 'make_call', 'create_crm_activity', 'update_lead_status', 'send_notification_to_isaac', 'wait', 'run_audit', 'generate_proposal']
@@ -58,6 +58,12 @@ async function handleTrigger(req, res) {
   return res.status(200).json({ ok: true, ...result })
 }
 
+// Cron entry point (see vercel.json) — resumes any workflow `wait` steps whose delay has elapsed.
+async function handleProcessPending(req, res) {
+  const result = await processPendingSteps()
+  return res.status(200).json({ ok: true, ...result })
+}
+
 export default async function handler(req, res) {
   try {
     if (setCors(req, res)) return
@@ -70,6 +76,7 @@ export default async function handler(req, res) {
       case 'toggle_workflow':  return await handleToggleWorkflow(req, res)
       case 'get_runs':         return await handleGetRuns(req, res)
       case 'trigger':          return await handleTrigger(req, res)
+      case 'process_pending':  return await handleProcessPending(req, res)
       default:
         if (req.method === 'GET' && !action) return await handleGetWorkflows(req, res)
         return res.status(400).json({ error: `Unknown action: ${action}` })
