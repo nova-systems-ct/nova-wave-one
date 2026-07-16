@@ -39,6 +39,15 @@ npm run dev
   The audit's "social score" is reported as unavailable rather than guessed.
 - **Nova SMS, Nova Email, Nova Revive** have working backend routes and dashboard pages at a
   functional-but-lean depth — enough to send/log/list, not a full campaign engine yet.
+- **This Vercel project is currently on the Hobby plan**, which only allows crons that run once a
+  day or less — a deploy with a more-frequent cron fails outright (`deploy_failed`, no partial
+  deploy, no fallback). Discovered 2026-07-16 when production had been silently stuck on an old
+  commit for a while because every subsequent deploy with a sub-daily cron failed. Nova Tron's
+  trend analysis, Nova Social's scheduled-post publishing, Nova Reviews' review polling, and Nova
+  Flow's delayed-workflow-step queue are all throttled to once/day in `vercel.json` as a result —
+  intended to run every 6h/15min/hourly/15min respectively. Upgrading to Vercel Pro removes this
+  cap (and the function-count cap — this project has ~24 real endpoint files, over Hobby's limit)
+  and the schedules in `vercel.json` should be restored to their intended frequency at that point.
 
 ## Deploying
 
